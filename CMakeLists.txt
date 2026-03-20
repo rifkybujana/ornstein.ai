@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ornstein C)
+project(ornstein C OBJC)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -12,7 +12,7 @@ target_include_directories(glad PUBLIC lib/glad/include)
 find_package(glfw3 3.3 REQUIRED)
 
 # Main executable
-add_executable(ornstein src/main.c)
+add_executable(ornstein src/main.c src/platform_macos.m)
 target_include_directories(ornstein PRIVATE include)
 target_link_libraries(ornstein PRIVATE glad glfw)
 
