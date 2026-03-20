@@ -122,7 +122,12 @@ int main(void) {
 
     text_init();
 
+    MoodState mood;
+    mood_init(&mood);
+    g_mood = &mood;
+
     g_chat = chat_create();
+    chat_set_mood_state(&mood);
 
     /* Find model and server paths */
     char model_path[1024];
@@ -139,10 +144,6 @@ int main(void) {
     const char *server_path = "bin/llama-server";
 
     llm_init(model_path, server_path);
-
-    MoodState mood;
-    mood_init(&mood);
-    g_mood = &mood;
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

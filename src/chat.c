@@ -1,6 +1,8 @@
 #include "chat.h"
 #include "text.h"
 #include "llm.h"
+#include "sentiment.h"
+#include "mood.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -8,6 +10,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* External mood state for sentiment overrides */
+static MoodState *chat_mood_state = NULL;
+
+void chat_set_mood_state(MoodState *ms) {
+    chat_mood_state = ms;
+}
 
 /* ══════════════════════════════════════════════════════════════════════
    Data structures
@@ -212,8 +221,22 @@ static void on_token(const char *token, int thinking, int done, void *userdata) 
             msg->is_thinking = 1;
         }
         if (cs->pending_len > 0 && cs->msg_count < CHAT_MAX_MESSAGES) {
+            /* Parse mood tag from response */
+            Emotion detected;
+            int tag_end = 0;
+            const char *response_text = cs->pending_response;
+            if (sentiment_parse(response_text, &detected, &tag_end)) {
+                response_text += tag_end; /* strip tag from display */
+                if (chat_mood_state) {
+                    mood_set_sentiment_override(chat_mood_state, detected, 5.0f);
+                }
+            }
+
             ChatMessage *msg = &cs->messages[cs->msg_count++];
-            memcpy(msg->text, cs->pending_response, cs->pending_len + 1);
+            int text_len = (int)strlen(response_text);
+            if (text_len >= CHAT_MAX_MSG_LEN) text_len = CHAT_MAX_MSG_LEN - 1;
+            memcpy(msg->text, response_text, text_len);
+            msg->text[text_len] = '\0';
             msg->is_user = 0;
             msg->is_thinking = 0;
         }
