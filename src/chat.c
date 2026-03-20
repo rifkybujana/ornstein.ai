@@ -3,6 +3,7 @@
 #include "llm.h"
 #include "sentiment.h"
 #include "mood.h"
+#include "stats.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -10,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 /* External mood state for sentiment overrides */
 static MoodState *chat_mood_state = NULL;
@@ -30,6 +32,7 @@ typedef struct {
     char text[CHAT_MAX_MSG_LEN];
     int is_user;     /* 1 = user, 0 = pet */
     int is_thinking; /* 1 = reasoning/thinking */
+    float age;      /* seconds since message appeared */
 } ChatMessage;
 
 struct ChatState {
@@ -47,6 +50,7 @@ struct ChatState {
     int pending_len;
     Emotion current_mood;  /* cached for LLM context */
     float cursor_blink;    /* timer for blinking cursor */
+    float anim_time;   /* monotonic timer for animations */
 };
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -174,6 +178,24 @@ static const char *emotion_name(Emotion e) {
     return "neutral";
 }
 
+static void mood_glow_color(Emotion e, float *r, float *g, float *b) {
+    static const float colors[][3] = {
+        {0.40f, 0.40f, 0.45f}, /* neutral */
+        {0.90f, 0.80f, 0.30f}, /* happy */
+        {1.00f, 0.60f, 0.20f}, /* excited */
+        {0.90f, 0.90f, 1.00f}, /* surprised */
+        {0.20f, 0.30f, 0.70f}, /* sleepy */
+        {0.30f, 0.30f, 0.35f}, /* bored */
+        {0.20f, 0.70f, 0.70f}, /* curious */
+        {0.30f, 0.40f, 0.80f}, /* sad */
+        {0.50f, 0.30f, 0.80f}, /* thinking */
+    };
+    int idx = (e >= 0 && e < EMOTION_COUNT) ? e : 0;
+    *r = colors[idx][0];
+    *g = colors[idx][1];
+    *b = colors[idx][2];
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    LLM token callback
    ══════════════════════════════════════════════════════════════════════ */
@@ -219,6 +241,7 @@ static void on_token(const char *token, int thinking, int done, void *userdata) 
             msg->text[copy_len] = '\0';
             msg->is_user = 0;
             msg->is_thinking = 1;
+            msg->age = 0.0f;
         }
         if (cs->pending_len > 0 && cs->msg_count < CHAT_MAX_MESSAGES) {
             /* Parse mood tag from response */
@@ -230,6 +253,7 @@ static void on_token(const char *token, int thinking, int done, void *userdata) 
                 if (chat_mood_state) {
                     mood_set_sentiment_override(chat_mood_state, detected, 5.0f);
                 }
+                stats_on_mood(detected);
             }
 
             ChatMessage *msg = &cs->messages[cs->msg_count++];
@@ -239,6 +263,7 @@ static void on_token(const char *token, int thinking, int done, void *userdata) 
             msg->text[text_len] = '\0';
             msg->is_user = 0;
             msg->is_thinking = 0;
+            msg->age = 0.0f;
         }
         cs->generating = 0;
     }
@@ -264,6 +289,7 @@ ChatState *chat_create(void) {
     cs->pending_response[0] = '\0';
     cs->current_mood = EMOTION_NEUTRAL;
     cs->cursor_blink = 0.0f;
+    cs->anim_time = 0.0f;
     c_init_gl();
     return cs;
 }
@@ -282,6 +308,7 @@ int chat_toggle(ChatState *cs) {
                 "failed. Check the terminal\n"
                 "for details.");
             msg->is_user = 0;
+            msg->age = 0.0f;
         }
     } else {
         cs->focused = 0;
@@ -326,6 +353,7 @@ void chat_on_key(ChatState *cs, int key, int action, int mods) {
                     snprintf(msg->text, CHAT_MAX_MSG_LEN,
                              "LLM not available. Check model path.");
                     msg->is_user = 0;
+                    msg->age = 0.0f;
                 }
                 cs->input[0] = '\0';
                 cs->input_len = 0;
@@ -337,6 +365,8 @@ void chat_on_key(ChatState *cs, int key, int action, int mods) {
                 ChatMessage *msg = &cs->messages[cs->msg_count++];
                 memcpy(msg->text, cs->input, cs->input_len + 1);
                 msg->is_user = 1;
+                msg->age = 0.0f;
+                stats_on_message();
             }
 
             /* Clear pending buffers, start generation */
@@ -380,6 +410,11 @@ void chat_update(ChatState *cs, Emotion mood, float dt) {
     cs->current_mood = mood;
     cs->cursor_blink += dt;
     if (cs->cursor_blink > 1.0f) cs->cursor_blink -= 1.0f;
+    cs->anim_time += dt;
+
+    for (int i = 0; i < cs->msg_count; i++) {
+        cs->messages[i].age += dt;
+    }
 
     /* Poll LLM for incoming tokens */
     if (cs->generating) {
@@ -412,6 +447,23 @@ void chat_render(ChatState *cs, float fb_w, float fb_h, float scale) {
     c_draw_rect(input_box_x, input_box_y, input_box_w, input_box_h,
                 0.15f, 0.15f, 0.16f, 0.9f,
                 fb_w, fb_h);
+
+    /* Mood-reactive focus ring */
+    if (cs->focused) {
+        float mr, mg, mb;
+        mood_glow_color(cs->current_mood, &mr, &mg, &mb);
+        float border = 1.0f * scale;
+        c_draw_rect(input_box_x, input_box_y, input_box_w, border,
+                    mr, mg, mb, 0.4f, fb_w, fb_h);
+        c_draw_rect(input_box_x, input_box_y + input_box_h - border,
+                    input_box_w, border,
+                    mr, mg, mb, 0.4f, fb_w, fb_h);
+        c_draw_rect(input_box_x, input_box_y, border, input_box_h,
+                    mr, mg, mb, 0.4f, fb_w, fb_h);
+        c_draw_rect(input_box_x + input_box_w - border, input_box_y,
+                    border, input_box_h,
+                    mr, mg, mb, 0.4f, fb_w, fb_h);
+    }
 
     /* Input text */
     float input_text_x = input_box_x + input_pad;
@@ -449,15 +501,27 @@ void chat_render(ChatState *cs, float fb_w, float fb_h, float scale) {
     float y = msgs_bottom;
     y += cs->scroll_offset;
 
+    /* Bubble layout constants */
+    float bubble_pad_x = 8.0f * scale;
+    float bubble_pad_y = 6.0f * scale;
+    float max_bubble_w = msgs_w * 0.7f;
+
     /* Pending streaming content */
     if (cs->generating && (cs->pending_len > 0 || cs->thinking_len > 0)) {
         if (cs->pending_len > 0) {
+            float content_w = max_bubble_w - bubble_pad_x * 2;
             float h = text_draw_wrapped(cs->pending_response,
-                                        msgs_x, fb_h * 2, msgs_w, text_scale,
+                                        msgs_x, fb_h * 2, content_w, text_scale,
                                         0, 0, 0, fb_w, fb_h);
-            y -= h;
+            float bubble_h = h + bubble_pad_y * 2;
+            y -= bubble_h;
+            float bubble_x = msgs_x;
+            c_draw_rect(bubble_x, y, max_bubble_w, bubble_h,
+                        0.18f, 0.18f, 0.20f, 0.85f,
+                        fb_w, fb_h);
             text_draw_wrapped(cs->pending_response,
-                              msgs_x, y, msgs_w, text_scale,
+                              bubble_x + bubble_pad_x, y + bubble_pad_y,
+                              content_w, text_scale,
                               0.9f, 0.9f, 0.85f, fb_w, fb_h);
             y -= msg_spacing;
         }
@@ -468,41 +532,94 @@ void chat_render(ChatState *cs, float fb_w, float fb_h, float scale) {
                 const char *nl = strchr(think_text, '\n');
                 if (nl) think_text = nl + 1;
             }
+            float content_w = max_bubble_w - bubble_pad_x * 2;
             float h = text_draw_wrapped(think_text,
-                                        msgs_x, fb_h * 2, msgs_w, text_scale,
+                                        msgs_x, fb_h * 2, content_w, text_scale,
                                         0, 0, 0, fb_w, fb_h);
-            y -= h;
+            float bubble_h = h + bubble_pad_y * 2;
+            y -= bubble_h;
+            float bubble_x = msgs_x;
+            c_draw_rect(bubble_x, y, max_bubble_w, bubble_h,
+                        0.15f, 0.15f, 0.17f, 0.70f,
+                        fb_w, fb_h);
             text_draw_wrapped(think_text,
-                              msgs_x, y, msgs_w, text_scale,
+                              bubble_x + bubble_pad_x, y + bubble_pad_y,
+                              content_w, text_scale,
                               0.45f, 0.45f, 0.5f, fb_w, fb_h);
             y -= msg_spacing;
         }
     } else if (cs->generating) {
-        text_draw("...", msgs_x, y - line_h, text_scale,
-                  0.5f, 0.5f, 0.5f, fb_w, fb_h);
+        /* Pulsing dots typing indicator */
+        float dot_r = 3.0f * scale;
+        float dot_gap = 12.0f * scale;
+        float dot_base_y = y - line_h * 0.5f;
+        float dot_base_x = msgs_x + 16.0f * scale;
+        for (int d = 0; d < 3; d++) {
+            float dot_scale = 0.5f + 0.5f * sinf(cs->anim_time * 4.0f + (float)d * 1.0f);
+            float dr = dot_r * dot_scale;
+            float dx = dot_base_x + (float)d * dot_gap;
+            c_draw_rect(dx - dr, dot_base_y - dr, dr * 2, dr * 2,
+                        0.5f, 0.5f, 0.55f, 0.8f,
+                        fb_w, fb_h);
+        }
         y -= line_h + msg_spacing;
     }
 
     /* Historical messages (newest at bottom) */
     for (int i = cs->msg_count - 1; i >= 0; i--) {
         ChatMessage *msg = &cs->messages[i];
+        float content_w = max_bubble_w - bubble_pad_x * 2;
         float h = text_draw_wrapped(msg->text,
-                                    msgs_x, fb_h * 2, msgs_w, text_scale,
+                                    msgs_x, fb_h * 2, content_w, text_scale,
                                     0, 0, 0, fb_w, fb_h);
-        y -= h;
+        float bubble_h = h + bubble_pad_y * 2;
+        y -= bubble_h;
 
-        if (y < msgs_bottom && y + h > msgs_top) {
+        if (y < msgs_bottom && y + bubble_h > msgs_top) {
+            /* Entry animation */
+            float anim_alpha = 1.0f;
+            float anim_x_off = 0.0f;
+            if (msg->age < 0.3f) {
+                float t = msg->age / 0.3f;
+                float ease = 1.0f - (1.0f - t) * (1.0f - t);
+                anim_x_off = (1.0f - ease) * 30.0f * scale;
+                anim_alpha = t < 0.67f ? t / 0.67f : 1.0f;
+            }
+
+            float bubble_x;
+            if (msg->is_user) {
+                bubble_x = msgs_x + msgs_w - max_bubble_w + anim_x_off;
+            } else {
+                bubble_x = msgs_x - anim_x_off;
+            }
+
+            /* Bubble background */
+            float bg_r, bg_g, bg_b, bg_a;
+            if (msg->is_user) {
+                bg_r = 0.20f; bg_g = 0.35f; bg_b = 0.60f; bg_a = 0.85f * anim_alpha;
+            } else if (msg->is_thinking) {
+                bg_r = 0.15f; bg_g = 0.15f; bg_b = 0.17f; bg_a = 0.70f * anim_alpha;
+            } else {
+                bg_r = 0.18f; bg_g = 0.18f; bg_b = 0.20f; bg_a = 0.85f * anim_alpha;
+            }
+            c_draw_rect(bubble_x, y, max_bubble_w, bubble_h,
+                        bg_r, bg_g, bg_b, bg_a,
+                        fb_w, fb_h);
+
+            /* Text */
             float r, g, b;
             if (msg->is_user) {
-                r = 0.7f; g = 0.8f; b = 1.0f;
+                r = 0.9f; g = 0.9f; b = 1.0f;
             } else if (msg->is_thinking) {
                 r = 0.45f; g = 0.45f; b = 0.5f;
             } else {
                 r = 0.9f; g = 0.9f; b = 0.85f;
             }
             text_draw_wrapped(msg->text,
-                              msgs_x, y, msgs_w, text_scale,
-                              r, g, b, fb_w, fb_h);
+                              bubble_x + bubble_pad_x, y + bubble_pad_y,
+                              content_w, text_scale,
+                              r * anim_alpha, g * anim_alpha, b * anim_alpha,
+                              fb_w, fb_h);
         }
 
         y -= msg_spacing;
