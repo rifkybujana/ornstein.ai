@@ -38,4 +38,7 @@ void mood_on_click(MoodState *ms);
 /* Call from cursor enter/leave callback. */
 void mood_on_cursor_enter(MoodState *ms, int entered);
 
+/* Set a mood override from LLM sentiment detection. */
+void mood_set_sentiment_override(MoodState *ms, Emotion e, float duration);
+
 #endif

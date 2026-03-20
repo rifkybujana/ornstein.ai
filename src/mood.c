@@ -135,3 +135,9 @@ Emotion mood_update(MoodState *ms, double mouse_x, double mouse_y, float dt) {
     /* Time of day baseline */
     return time_of_day_mood();
 }
+
+void mood_set_sentiment_override(MoodState *ms, Emotion e, float duration) {
+    if (!ms) return;
+    ms->override_emotion = e;
+    ms->override_timer = duration;
+}
