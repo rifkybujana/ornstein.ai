@@ -11,6 +11,8 @@
 #include "llm.h"
 #include "chat.h"
 #include "text.h"
+#include "ambient.h"
+#include "stats.h"
 
 /* ── Callbacks ─────────────────────────────────────────────────────── */
 
@@ -121,6 +123,8 @@ int main(void) {
     face_render_init();
 
     text_init();
+    ambient_init();
+    stats_init();
 
     MoodState mood;
     mood_init(&mood);
@@ -165,14 +169,22 @@ int main(void) {
 
         /* Face always centered on full screen */
         float cx = (float)fb_w * 0.5f;
-        float cy = (float)fb_h * 0.5f;
+        float cy = (float)fb_h * 0.5f + ambient_bob_offset((float)now, scale);
 
-        /* Update mood → face → chat → LLM */
+        /* Update mood → face → ambient → chat → stats → LLM */
         Emotion target = mood_update(&mood, mouse_x, mouse_y, dt);
         face.target_emotion = target;
         FaceParams params = face_update(&face, dt);
+        ambient_update(target, dt);
         if (g_chat) chat_update(g_chat, target, dt);
+        stats_update(dt);
+        if (g_chat && chat_visible(g_chat)) {
+            stats_on_chat_open(dt);
+        }
         llm_poll();
+
+        /* Render ambient (behind face) */
+        ambient_render(cx, cy, target, scale, (float)fb_w, (float)fb_h, (float)now);
 
         /* Render face */
         face_render(&params, cx, cy, mx, my, scale, (float)fb_w, (float)fb_h);
@@ -183,6 +195,40 @@ int main(void) {
         } else {
             text_draw("Tab to chat", (float)fb_w - 120.0f * scale, (float)fb_h - 20.0f * scale,
                       1.0f * scale, 0.3f, 0.3f, 0.35f, (float)fb_w, (float)fb_h);
+        }
+
+        /* Stats bar (only when chat is open) */
+        if (g_chat && chat_visible(g_chat)) {
+            float bar_w = 80.0f * scale;
+            float bar_h = 6.0f * scale;
+            float bar_y = 12.0f * scale;
+            float label_sc = 1.0f * scale;
+            float lh = text_line_height(label_sc);
+            float total_w = bar_w * 3 + 20.0f * scale * 2;
+            float start_x = ((float)fb_w - total_w) * 0.5f;
+
+            struct {
+                const char *label; float value;
+                float r, g, b;
+            } bars[] = {
+                {"Bond",   stats_bond(),   0.9f, 0.4f, 0.5f},
+                {"Joy",    stats_joy(),    0.9f, 0.8f, 0.3f},
+                {"Energy", stats_energy(), 0.3f, 0.8f, 0.5f},
+            };
+
+            for (int i = 0; i < 3; i++) {
+                float bx = start_x + (float)i * (bar_w + 20.0f * scale);
+                text_draw(bars[i].label, bx, bar_y, label_sc,
+                          0.5f, 0.5f, 0.55f, (float)fb_w, (float)fb_h);
+                float by = bar_y + lh + 4.0f * scale;
+                text_draw_rect(bx, by, bar_w, bar_h,
+                               0.2f, 0.2f, 0.25f, 1.0f,
+                               (float)fb_w, (float)fb_h);
+                if (bars[i].value > 0.0f)
+                    text_draw_rect(bx, by, bar_w * bars[i].value, bar_h,
+                                   bars[i].r, bars[i].g, bars[i].b, 1.0f,
+                                   (float)fb_w, (float)fb_h);
+            }
         }
 
         /* Show download / startup status (centered, no panel) */
@@ -257,6 +303,8 @@ int main(void) {
     }
 
     llm_shutdown();
+    stats_shutdown();
+    ambient_cleanup();
     chat_destroy(g_chat);
     text_cleanup();
     face_render_cleanup();
