@@ -452,15 +452,23 @@ void face_render(const FaceParams *p, float cx, float cy,
                         fb_w, fb_h);
         }
 
-        /* Pupil: orbit toward cursor */
+        /* Pupil: orbit toward cursor, only when nearby */
         float dx = mouse_x - ecx;
         float dy = mouse_y - ecy;
+        float dist = sqrtf(dx * dx + dy * dy);
+        float notice_radius = 250.0f * scale; /* how close cursor must be */
+        /* Fade from full tracking to centered as cursor moves away */
+        float attention = 1.0f - dist / notice_radius;
+        if (attention < 0.0f) attention = 0.0f;
+        /* Ease it for a smoother falloff */
+        attention *= attention;
+
         float angle = atan2f(dy, dx);
         /* Dampen orbit by eye_openness so pupil doesn't float when eyes closed */
         float openness_dampen = p->eye_openness;
         if (openness_dampen < 0.0f) openness_dampen = 0.0f;
         if (openness_dampen > 1.0f) openness_dampen = 1.0f;
-        float pd = pupil_dist * scale * openness_dampen;
+        float pd = pupil_dist * scale * openness_dampen * attention;
         float px = ecx + cosf(angle) * pd;
         float py = ecy + sinf(angle) * pd;
         float pr = pupil_r * p->pupil_scale * scale;
