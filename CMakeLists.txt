@@ -25,7 +25,8 @@ add_subdirectory(lib/llama.cpp)
 find_package(CURL REQUIRED)
 
 # Main executable
-add_executable(ornstein src/main.c src/face.c src/mood.c src/platform_macos.m)
+add_executable(ornstein src/main.c src/face.c src/mood.c src/platform_macos.m
+                        src/text.c)
 target_include_directories(ornstein PRIVATE include src)
 target_link_libraries(ornstein PRIVATE glad glfw CURL::libcurl)
 
