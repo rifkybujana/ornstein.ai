@@ -13,6 +13,7 @@ static const FaceParams presets[EMOTION_COUNT] = {
     [EMOTION_BORED]     = {0.7f, 0.95f, 0.8f, 0.3f, -0.2f, 0.0f, 1.0f},
     [EMOTION_CURIOUS]   = {1.1f, 1.05f, 1.2f, 0.0f,  0.2f, 0.1f, 0.9f},
     [EMOTION_SAD]       = {0.8f, 0.95f, 0.9f, 0.0f, -0.7f, 0.0f, 0.8f},
+    [EMOTION_THINKING]  = {0.8f, 1.0f, 0.8f, 0.15f, 0.1f, 0.05f, 0.9f},
 };
 
 const FaceParams *face_emotion_preset(Emotion e) {

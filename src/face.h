@@ -22,6 +22,7 @@ typedef enum {
     EMOTION_BORED,
     EMOTION_CURIOUS,
     EMOTION_SAD,
+    EMOTION_THINKING,
     EMOTION_COUNT
 } Emotion;
 

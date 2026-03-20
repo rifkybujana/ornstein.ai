@@ -159,7 +159,7 @@ static void c_draw_rect(float x, float y, float w, float h,
 static const char *emotion_name(Emotion e) {
     static const char *names[] = {
         "neutral", "happy", "excited", "surprised",
-        "sleepy", "bored", "curious", "sad"
+        "sleepy", "bored", "curious", "sad", "thinking"
     };
     if (e >= 0 && e < EMOTION_COUNT) return names[e];
     return "neutral";
