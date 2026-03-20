@@ -13,7 +13,7 @@ find_package(glfw3 3.3 REQUIRED)
 
 # Main executable
 add_executable(ornstein src/main.c src/face.c src/mood.c src/platform_macos.m)
-target_include_directories(ornstein PRIVATE include)
+target_include_directories(ornstein PRIVATE include src)
 target_link_libraries(ornstein PRIVATE glad glfw)
 
 # macOS frameworks
