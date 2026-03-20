@@ -3,10 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
-
-static float randf(float lo, float hi) {
-    return lo + (float)rand() / (float)RAND_MAX * (hi - lo);
-}
+#include "util.h"
 
 void mood_init(MoodState *ms) {
     ms->last_mouse_x = 0;
@@ -38,14 +35,22 @@ void mood_on_cursor_enter(MoodState *ms, int entered) {
     ms->cursor_in_window = entered;
 }
 
-static Emotion time_of_day_mood(void) {
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    int hour = t->tm_hour;
-    if (hour >= 6 && hour < 12)  return EMOTION_HAPPY;
-    if (hour >= 12 && hour < 18) return EMOTION_NEUTRAL;
-    if (hour >= 18 && hour < 22) return EMOTION_BORED;
-    return EMOTION_SLEEPY;
+static Emotion cached_tod_mood = EMOTION_NEUTRAL;
+static float   tod_cache_timer = 0.0f;
+
+static Emotion time_of_day_mood(float dt) {
+    tod_cache_timer -= dt;
+    if (tod_cache_timer <= 0.0f) {
+        tod_cache_timer = 30.0f;
+        time_t now = time(NULL);
+        struct tm *t = localtime(&now);
+        int hour = t->tm_hour;
+        if (hour >= 6 && hour < 12)       cached_tod_mood = EMOTION_HAPPY;
+        else if (hour >= 12 && hour < 18)  cached_tod_mood = EMOTION_NEUTRAL;
+        else if (hour >= 18 && hour < 22)  cached_tod_mood = EMOTION_BORED;
+        else                               cached_tod_mood = EMOTION_SLEEPY;
+    }
+    return cached_tod_mood;
 }
 
 Emotion mood_update(MoodState *ms, double mouse_x, double mouse_y, float dt) {
@@ -133,7 +138,7 @@ Emotion mood_update(MoodState *ms, double mouse_x, double mouse_y, float dt) {
     if (ms->idle_time > 15.0f) return EMOTION_BORED;
 
     /* Time of day baseline */
-    return time_of_day_mood();
+    return time_of_day_mood(dt);
 }
 
 void mood_set_sentiment_override(MoodState *ms, Emotion e, float duration) {

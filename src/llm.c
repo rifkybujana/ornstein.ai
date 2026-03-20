@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <pthread.h>
 #include <curl/curl.h>
+#include <stdatomic.h>
 
 /* ── Model auto-download (async) ─────────────────────────────────── */
 
@@ -212,7 +213,7 @@ static int queue_pop(TokenEntry *out) {
 /* ── Server process ───────────────────────────────────────────────── */
 
 static pid_t server_pid = -1;
-static int   server_is_ready = 0;
+static _Atomic int server_is_ready = 0;
 
 static char  saved_model_path[1024];
 static char  saved_server_path[1024];
@@ -220,18 +221,18 @@ static char  saved_server_path[1024];
 /* ── Inference thread state ───────────────────────────────────────── */
 
 static pthread_t    infer_thread;
-static int          infer_thread_running = 0;
-static int          infer_cancel = 0;
+static _Atomic int  infer_thread_running = 0;
+static _Atomic int  infer_cancel = 0;
 
 static llm_token_cb current_cb = NULL;
 static void        *current_userdata = NULL;
 
-static char request_body[2048];
+static char request_body[32768];
 
 /* ── Background init thread (download + server start) ─────────────── */
 
 static pthread_t init_thread;
-static int       init_thread_running = 0;
+static _Atomic int init_thread_running = 0;
 
 static int start_server(void) {
     set_state(LLM_STATE_SERVER_START);
@@ -250,7 +251,8 @@ static int start_server(void) {
               "-m", saved_model_path,
               "--port", "8231",
               "-ngl", "99",
-              "-c", "2048",
+              "-c", "8192",
+              "-n", "-1",
               "--log-disable",
               (char *)NULL);
         _exit(127);
@@ -491,33 +493,54 @@ static void json_escape(const char *src, char *dst, int dst_size) {
     dst[j] = '\0';
 }
 
-static void build_request(const char *mood, const char *user_msg) {
-    char system_prompt[512];
+static void build_request(const char *mood,
+                          const LlmMessage *history, int history_count,
+                          const char *user_msg) {
+    char system_prompt[1024];
     snprintf(system_prompt, sizeof(system_prompt),
-             "You are a cute desktop pet named Ornstein. "
-             "You speak in short, expressive sentences. "
+             "You are Ornstein, a helpful and knowledgeable desktop AI companion. "
+             "You live on the user's screen as an animated character. "
              "You're currently feeling %s. "
-             "Keep responses under 2 sentences. "
+             "Be genuinely helpful: answer questions thoroughly, explain concepts clearly, "
+             "help with code, math, writing, brainstorming, or anything the user needs. "
+             "Be concise but complete — give the full answer, not a dumbed-down version. "
+             "Show personality: you are warm, curious, and a little playful, but substance comes first. "
              "Before your response, tag your mood: [MOOD:emotion]. "
              "Valid emotions: neutral, happy, excited, surprised, "
              "sleepy, bored, curious, sad, thinking.", mood);
 
-    char escaped_system[512];
-    char escaped_user[512];
+    char escaped_system[2048];
     json_escape(system_prompt, escaped_system, sizeof(escaped_system));
-    json_escape(user_msg, escaped_user, sizeof(escaped_user));
 
-    snprintf(request_body, sizeof(request_body),
-             "{"
-             "\"messages\":["
-             "{\"role\":\"system\",\"content\":\"%s\"},"
-             "{\"role\":\"user\",\"content\":\"%s\"}"
-             "],"
-             "\"stream\":true,"
-             "\"temperature\":0.7,"
-             "\"max_tokens\":256"
-             "}",
-             escaped_system, escaped_user);
+    /* Build messages array: system + history + current user message */
+    int pos = 0;
+    pos += snprintf(request_body + pos, sizeof(request_body) - pos,
+                    "{\"messages\":["
+                    "{\"role\":\"system\",\"content\":\"%s\"}",
+                    escaped_system);
+
+    /* Append conversation history (last N messages to fit context) */
+    int max_history = history_count > 20 ? 20 : history_count;
+    int start = history_count - max_history;
+    for (int i = start; i < history_count; i++) {
+        char escaped[4096];
+        json_escape(history[i].content, escaped, sizeof(escaped));
+        pos += snprintf(request_body + pos, sizeof(request_body) - pos,
+                        ",{\"role\":\"%s\",\"content\":\"%s\"}",
+                        history[i].role, escaped);
+        if (pos >= (int)sizeof(request_body) - 2048) break;
+    }
+
+    /* Current user message */
+    char escaped_user[2048];
+    json_escape(user_msg, escaped_user, sizeof(escaped_user));
+    pos += snprintf(request_body + pos, sizeof(request_body) - pos,
+                    ",{\"role\":\"user\",\"content\":\"%s\"}"
+                    "],"
+                    "\"stream\":true,"
+                    "\"temperature\":0.7"
+                    "}",
+                    escaped_user);
 }
 
 /* ── Public API ───────────────────────────────────────────────────── */
@@ -547,7 +570,9 @@ int llm_init(const char *model_path, const char *server_path) {
     return 0; /* always succeed — init happens in background */
 }
 
-void llm_send(const char *mood, const char *user_msg,
+void llm_send(const char *mood,
+              const LlmMessage *history, int history_count,
+              const char *user_msg,
               llm_token_cb cb, void *userdata) {
     if (!server_is_ready) return;
 
@@ -565,7 +590,7 @@ void llm_send(const char *mood, const char *user_msg,
     current_cb = cb;
     current_userdata = userdata;
 
-    build_request(mood, user_msg);
+    build_request(mood, history, history_count, user_msg);
 
     infer_cancel = 0;
     infer_thread_running = 1;

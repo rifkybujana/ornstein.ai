@@ -11,6 +11,8 @@ typedef struct {
     float mouth_curve;    /* -1.0 (frown) to 1.0 (smile) */
     float mouth_openness; /* 0.0 (line) to 1.0 (open O) */
     float mouth_width;    /* 0.8 to 1.2 */
+    float pupil_offset_x; /* idle look-around nudge */
+    float pupil_offset_y;
 } FaceParams;
 
 typedef enum {
@@ -42,6 +44,15 @@ typedef struct {
     /* yawn */
     float yawn_timer;         /* countdown to next yawn (only in SLEEPY) */
     float yawn_phase;         /* 0 = not yawning, >0 = in yawn */
+    /* idle animations */
+    int   idle;               /* set by main.c: mood.idle_time > 3s */
+    float breath_time;
+    float look_timer, look_hold;
+    float look_offset_x, look_offset_y;
+    float look_cur_x, look_cur_y;
+    int   look_active;
+    float micro_timer;
+    float micro_curve_offset, micro_curve_cur;
 } FaceState;
 
 /* Initialize face state to NEUTRAL. */

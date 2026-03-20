@@ -26,6 +26,10 @@ float text_draw_wrapped(const char *str, float x, float y,
                         float r, float g, float b,
                         float fb_w, float fb_h);
 
+/* Set global text alpha for subsequent text_draw / text_draw_wrapped calls.
+   Default is 1.0. Reset after use. */
+void text_set_alpha(float a);
+
 /* Draw a filled rectangle at pixel coordinates.
    x, y: top-left corner. w, h: size.
    r, g, b, a: color with alpha. */

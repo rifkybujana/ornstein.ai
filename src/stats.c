@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
+#include "util.h"
 
 static float s_bond   = 0.0f;
 static float s_joy    = 0.5f;
@@ -11,12 +12,6 @@ static float s_energy = 1.0f;
 static float s_save_timer = 0.0f;
 
 #define SAVE_INTERVAL 60.0f
-
-static float clampf(float v, float lo, float hi) {
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
-}
 
 static float json_get_float(const char *json, const char *key, float def) {
     char pattern[64];

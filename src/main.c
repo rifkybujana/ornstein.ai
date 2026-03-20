@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
+#include <mach-o/dyld.h>
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -13,6 +15,7 @@
 #include "text.h"
 #include "ambient.h"
 #include "stats.h"
+#include "util.h"
 
 /* ── Callbacks ─────────────────────────────────────────────────────── */
 
@@ -108,6 +111,7 @@ int main(void) {
     glfwSetScrollCallback(window, scroll_cb);
 
     platform_style_window(window);
+    platform_register_hotkey();
 
     int version = gladLoadGL(glfwGetProcAddress);
     if (!version) {
@@ -143,9 +147,19 @@ int main(void) {
         snprintf(model_path, sizeof(model_path), "%s/.ornstein/model.gguf", home ? home : ".");
     }
 
-    /* Find llama-server — look next to the ornstein binary */
-    /* The build produces it at build/bin/llama-server */
-    const char *server_path = "bin/llama-server";
+    /* Find llama-server — resolve relative to executable location */
+    char server_path[1024];
+    {
+        char exe_dir[1024];
+        uint32_t exe_size = sizeof(exe_dir);
+        if (_NSGetExecutablePath(exe_dir, &exe_size) == 0) {
+            char *last_slash = strrchr(exe_dir, '/');
+            if (last_slash) *last_slash = '\0';
+            snprintf(server_path, sizeof(server_path), "%s/bin/llama-server", exe_dir);
+        } else {
+            snprintf(server_path, sizeof(server_path), "bin/llama-server");
+        }
+    }
 
     llm_init(model_path, server_path);
 
@@ -153,14 +167,46 @@ int main(void) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     double last_time = glfwGetTime();
+    int g_window_visible = 1;
 
     while (!glfwWindowShouldClose(window)) {
         double now = glfwGetTime();
         float dt = (float)(now - last_time);
         last_time = now;
 
+        /* Global hotkey toggle */
+        if (platform_hotkey_pending()) {
+            if (g_window_visible) {
+                platform_hide_window(window);
+                g_window_visible = 0;
+            } else {
+                platform_show_window(window);
+                g_window_visible = 1;
+            }
+        }
+
+        /* When hidden: keep LLM responsive but skip rendering */
+        if (!g_window_visible) {
+            llm_poll();
+            glfwWaitEventsTimeout(0.1);
+            continue;
+        }
+
         glViewport(0, 0, fb_w, fb_h);
-        glClearColor(0.11f, 0.11f, 0.12f, 1.0f);
+        {
+            float tod_r, tod_g, tod_b, tod_i;
+            ambient_get_tod_bg_tint(&tod_r, &tod_g, &tod_b, &tod_i);
+            /* Blend 12% toward time-of-day tint, with night dimming */
+            float base = 0.11f;
+            float bg_r = lerpf(base, base * tod_r, 0.12f) * tod_i;
+            float bg_g = lerpf(base, base * tod_g, 0.12f) * tod_i;
+            float bg_b = lerpf(base, base * tod_b, 0.12f) * tod_i;
+            /* Clamp so it doesn't go too dark */
+            if (bg_r < 0.04f) bg_r = 0.04f;
+            if (bg_g < 0.04f) bg_g = 0.04f;
+            if (bg_b < 0.04f) bg_b = 0.04f;
+            glClearColor(bg_r, bg_g, bg_b, 1.0f);
+        }
         glClear(GL_COLOR_BUFFER_BIT);
 
         float scale = (float)fb_w / (float)win_w;
@@ -174,6 +220,7 @@ int main(void) {
         /* Update mood → face → ambient → chat → stats → LLM */
         Emotion target = mood_update(&mood, mouse_x, mouse_y, dt);
         face.target_emotion = target;
+        face.idle = (mood.idle_time > 3.0f);
         FaceParams params = face_update(&face, dt);
         ambient_update(target, dt);
         if (g_chat) chat_update(g_chat, target, dt);

@@ -4,6 +4,11 @@ project(ornstein C CXX OBJC)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# Compiler warnings
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
+endif()
+
 # GLAD
 add_library(glad STATIC lib/glad/src/gl.c)
 target_include_directories(glad PUBLIC lib/glad/include)
@@ -27,7 +32,7 @@ find_package(CURL REQUIRED)
 # Main executable
 add_executable(ornstein src/main.c src/face.c src/mood.c src/platform_macos.m
                         src/text.c src/llm.c src/chat.c src/sentiment.c
-                        src/stats.c src/ambient.c)
+                        src/stats.c src/ambient.c src/gl_util.c)
 target_include_directories(ornstein PRIVATE include src)
 target_link_libraries(ornstein PRIVATE glad glfw CURL::libcurl)
 
@@ -39,5 +44,18 @@ if(APPLE)
         "-framework IOKit"
         "-framework CoreVideo"
         "-framework CoreWLAN"
+        "-framework Carbon"
     )
 endif()
+
+# Tests
+add_executable(ornstein_tests tests/test_main.c src/sentiment.c src/face.c src/gl_util.c)
+target_include_directories(ornstein_tests PRIVATE include src)
+target_link_libraries(ornstein_tests PRIVATE glad "-framework OpenGL")
+target_compile_definitions(ornstein_tests PRIVATE ORNSTEIN_TESTING=1)
+enable_testing()
+add_test(NAME unit_tests COMMAND ornstein_tests)
+
+# Install
+install(TARGETS ornstein RUNTIME DESTINATION bin)
+install(DIRECTORY assets/ DESTINATION share/ornstein/assets)

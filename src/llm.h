@@ -13,12 +13,22 @@ typedef void (*llm_token_cb)(const char *token, int thinking, int done, void *us
    Returns 0 on success, -1 if server fails to start. */
 int llm_init(const char *model_path, const char *server_path);
 
-/* Send a chat message. The response streams via the callback set in llm_poll.
+/* A single message in conversation history. */
+typedef struct {
+    const char *role;    /* "user" or "assistant" */
+    const char *content;
+} LlmMessage;
+
+/* Send a chat message with conversation history.
    mood: current emotion name string (e.g. "happy", "sleepy").
-   user_msg: the user's message.
+   history: array of past messages (oldest first), or NULL.
+   history_count: number of messages in history.
+   user_msg: the current user message.
    cb: called from llm_poll with each token.
    userdata: passed to cb. */
-void llm_send(const char *mood, const char *user_msg,
+void llm_send(const char *mood,
+              const LlmMessage *history, int history_count,
+              const char *user_msg,
               llm_token_cb cb, void *userdata);
 
 /* Call every frame from the main loop. Dispatches any pending tokens

@@ -10,4 +10,7 @@ void  ambient_render(float cx, float cy, Emotion emotion, float scale,
                      float fb_w, float fb_h, float time);
 void  ambient_cleanup(void);
 
+/* Get time-of-day tint for background color blending. */
+void  ambient_get_tod_bg_tint(float *r, float *g, float *b, float *intensity);
+
 #endif

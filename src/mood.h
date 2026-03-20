@@ -11,7 +11,7 @@ typedef struct {
     int    cursor_in_window;
     int    mouse_clicked;        /* set to 1 for one frame on click */
     /* Override */
-    Emotion override_emotion;    /* current override, or -1 if none */
+    int     override_emotion;    /* current override (Emotion value), or -1 if none */
     float   override_timer;      /* seconds remaining */
     /* Random */
     float random_shift_timer;

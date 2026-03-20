@@ -3,26 +3,24 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include "util.h"
+#include "gl_util.h"
 
 static const FaceParams presets[EMOTION_COUNT] = {
-    [EMOTION_NEUTRAL]   = {1.0f, 1.0f,  1.0f, 0.0f,  0.0f, 0.0f, 1.0f},
-    [EMOTION_HAPPY]     = {1.0f, 1.0f,  1.1f, 0.2f,  1.0f, 0.0f, 1.2f},
-    [EMOTION_EXCITED]   = {1.2f, 1.15f, 1.3f, 0.0f,  0.8f, 0.3f, 1.1f},
-    [EMOTION_SURPRISED] = {1.4f, 1.2f,  1.4f, 0.0f,  0.0f, 1.0f, 0.8f},
-    [EMOTION_SLEEPY]    = {0.3f, 0.9f,  0.7f, 0.5f,  0.1f, 0.0f, 0.9f},
-    [EMOTION_BORED]     = {0.7f, 0.95f, 0.8f, 0.3f, -0.2f, 0.0f, 1.0f},
-    [EMOTION_CURIOUS]   = {1.1f, 1.05f, 1.2f, 0.0f,  0.2f, 0.1f, 0.9f},
-    [EMOTION_SAD]       = {0.8f, 0.95f, 0.9f, 0.0f, -0.7f, 0.0f, 0.8f},
-    [EMOTION_THINKING]  = {0.8f, 1.0f, 0.8f, 0.15f, 0.1f, 0.05f, 0.9f},
+    [EMOTION_NEUTRAL]   = {1.0f, 1.0f,  1.0f, 0.0f,  0.0f, 0.0f, 1.0f, 0,0},
+    [EMOTION_HAPPY]     = {1.0f, 1.0f,  1.1f, 0.2f,  1.0f, 0.0f, 1.2f, 0,0},
+    [EMOTION_EXCITED]   = {1.2f, 1.15f, 1.3f, 0.0f,  0.8f, 0.3f, 1.1f, 0,0},
+    [EMOTION_SURPRISED] = {1.4f, 1.2f,  1.4f, 0.0f,  0.0f, 1.0f, 0.8f, 0,0},
+    [EMOTION_SLEEPY]    = {0.3f, 0.9f,  0.7f, 0.5f,  0.1f, 0.0f, 0.9f, 0,0},
+    [EMOTION_BORED]     = {0.7f, 0.95f, 0.8f, 0.3f, -0.2f, 0.0f, 1.0f, 0,0},
+    [EMOTION_CURIOUS]   = {1.1f, 1.05f, 1.2f, 0.0f,  0.2f, 0.1f, 0.9f, 0,0},
+    [EMOTION_SAD]       = {0.8f, 0.95f, 0.9f, 0.0f, -0.7f, 0.0f, 0.8f, 0,0},
+    [EMOTION_THINKING]  = {0.8f, 1.0f, 0.8f, 0.15f, 0.1f, 0.05f, 0.9f, 0,0},
 };
 
 const FaceParams *face_emotion_preset(Emotion e) {
-    if (e < 0 || e >= EMOTION_COUNT) e = EMOTION_NEUTRAL;
+    if ((int)e < 0 || (int)e >= EMOTION_COUNT) e = EMOTION_NEUTRAL;
     return &presets[e];
-}
-
-static float lerpf(float a, float b, float t) {
-    return a + (b - a) * t;
 }
 
 void face_params_lerp(FaceParams *cur, const FaceParams *tgt, float speed, float dt) {
@@ -34,13 +32,12 @@ void face_params_lerp(FaceParams *cur, const FaceParams *tgt, float speed, float
     cur->mouth_curve    = lerpf(cur->mouth_curve,     tgt->mouth_curve,    t);
     cur->mouth_openness = lerpf(cur->mouth_openness,  tgt->mouth_openness, t);
     cur->mouth_width    = lerpf(cur->mouth_width,     tgt->mouth_width,    t);
-}
-
-static float randf(float lo, float hi) {
-    return lo + (float)rand() / (float)RAND_MAX * (hi - lo);
+    cur->pupil_offset_x = lerpf(cur->pupil_offset_x,  tgt->pupil_offset_x, t);
+    cur->pupil_offset_y = lerpf(cur->pupil_offset_y,  tgt->pupil_offset_y, t);
 }
 
 void face_init(FaceState *fs) {
+    memset(fs, 0, sizeof(*fs));
     fs->current = presets[EMOTION_NEUTRAL];
     fs->target_emotion = EMOTION_NEUTRAL;
     fs->blink_timer = randf(2.0f, 6.0f);
@@ -48,6 +45,8 @@ void face_init(FaceState *fs) {
     fs->double_blink_pending = 0;
     fs->yawn_timer = randf(8.0f, 15.0f);
     fs->yawn_phase = 0.0f;
+    fs->look_timer = randf(5.0f, 10.0f);
+    fs->micro_timer = randf(3.0f, 7.0f);
 }
 
 FaceParams face_update(FaceState *fs, float dt) {
@@ -106,6 +105,60 @@ FaceParams face_update(FaceState *fs, float dt) {
         result.mouth_openness = fmaxf(result.mouth_openness, intensity);
         result.eye_openness *= (1.0f - 0.7f * intensity);
         if (fs->yawn_phase < 0.0f) fs->yawn_phase = 0.0f;
+    }
+
+    /* ── Idle animations ──────────────────────────────────────────── */
+
+    /* Breathing: subtle ±2% eye scale at 0.4 Hz */
+    fs->breath_time += dt;
+    result.eye_scale *= 1.0f + 0.02f * sinf(fs->breath_time * 2.0f * 3.14159f * 0.4f);
+
+    /* Random look-around (only when idle) */
+    if (fs->idle) {
+        fs->look_timer -= dt;
+        if (fs->look_timer <= 0.0f && !fs->look_active) {
+            fs->look_offset_x = randf(-18.0f, 18.0f);
+            fs->look_offset_y = randf(-12.0f, 12.0f);
+            fs->look_hold = randf(1.0f, 2.0f);
+            fs->look_active = 1;
+            fs->look_timer = fs->look_hold;
+        }
+        if (fs->look_active) {
+            fs->look_timer -= dt;
+            if (fs->look_timer <= 0.0f) {
+                /* Return to center */
+                fs->look_offset_x = 0.0f;
+                fs->look_offset_y = 0.0f;
+                fs->look_active = 0;
+                fs->look_timer = randf(5.0f, 10.0f);
+            }
+        }
+        float lt = 1.0f - expf(-3.0f * dt);
+        fs->look_cur_x = lerpf(fs->look_cur_x, fs->look_offset_x, lt);
+        fs->look_cur_y = lerpf(fs->look_cur_y, fs->look_offset_y, lt);
+        result.pupil_offset_x = fs->look_cur_x;
+        result.pupil_offset_y = fs->look_cur_y;
+    } else {
+        /* Smoothly return to center when not idle */
+        float lt = 1.0f - expf(-3.0f * dt);
+        fs->look_cur_x = lerpf(fs->look_cur_x, 0.0f, lt);
+        fs->look_cur_y = lerpf(fs->look_cur_y, 0.0f, lt);
+        result.pupil_offset_x = fs->look_cur_x;
+        result.pupil_offset_y = fs->look_cur_y;
+        fs->look_active = 0;
+        fs->look_timer = randf(5.0f, 10.0f);
+    }
+
+    /* Micro-expressions: tiny mouth_curve nudge every 3-7s */
+    fs->micro_timer -= dt;
+    if (fs->micro_timer <= 0.0f) {
+        fs->micro_curve_offset = randf(-0.05f, 0.05f);
+        fs->micro_timer = randf(3.0f, 7.0f);
+    }
+    {
+        float mt = 1.0f - expf(-1.5f * dt);
+        fs->micro_curve_cur = lerpf(fs->micro_curve_cur, fs->micro_curve_offset, mt);
+        result.mouth_curve += fs->micro_curve_cur;
     }
 
     return result;
@@ -243,42 +296,13 @@ static GLint  r_u_rect_pos, r_u_rect_size, r_u_rect_resolution, r_u_rect_color;
 static GLuint r_prog_mouth;
 static GLint  r_u_mouth_resolution, r_u_mouth_color;
 
-static GLuint r_compile(GLenum type, const char *src) {
-    GLuint s = glCreateShader(type);
-    glShaderSource(s, 1, &src, NULL);
-    glCompileShader(s);
-    int ok;
-    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[512];
-        glGetShaderInfoLog(s, sizeof(log), NULL, log);
-        fprintf(stderr, "face shader compile: %s\n", log);
-    }
-    return s;
-}
-
-static GLuint r_link(GLuint vert, GLuint frag) {
-    GLuint p = glCreateProgram();
-    glAttachShader(p, vert);
-    glAttachShader(p, frag);
-    glLinkProgram(p);
-    int ok;
-    glGetProgramiv(p, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[512];
-        glGetProgramInfoLog(p, sizeof(log), NULL, log);
-        fprintf(stderr, "face shader link: %s\n", log);
-    }
-    return p;
-}
-
 static void r_init_shaders(void) {
-    GLuint frag = r_compile(GL_FRAGMENT_SHADER, r_frag_src);
+    GLuint frag = gl_compile_shader(GL_FRAGMENT_SHADER, r_frag_src, "face");
 
     /* Ellipse program */
     {
-        GLuint vert = r_compile(GL_VERTEX_SHADER, r_vert_src);
-        r_prog_ellipse = r_link(vert, frag);
+        GLuint vert = gl_compile_shader(GL_VERTEX_SHADER, r_vert_src, "face");
+        r_prog_ellipse = gl_link_program(vert, frag, "face");
         glDeleteShader(vert);
         r_u_center     = glGetUniformLocation(r_prog_ellipse, "uCenter");
         r_u_radius     = glGetUniformLocation(r_prog_ellipse, "uRadius");
@@ -288,8 +312,8 @@ static void r_init_shaders(void) {
 
     /* Rect program */
     {
-        GLuint vert = r_compile(GL_VERTEX_SHADER, r_rect_vert_src);
-        r_prog_rect = r_link(vert, frag);
+        GLuint vert = gl_compile_shader(GL_VERTEX_SHADER, r_rect_vert_src, "face");
+        r_prog_rect = gl_link_program(vert, frag, "face");
         glDeleteShader(vert);
         r_u_rect_pos        = glGetUniformLocation(r_prog_rect, "uRectPos");
         r_u_rect_size       = glGetUniformLocation(r_prog_rect, "uRectSize");
@@ -299,8 +323,8 @@ static void r_init_shaders(void) {
 
     /* Mouth program */
     {
-        GLuint vert = r_compile(GL_VERTEX_SHADER, r_mouth_vert_src);
-        r_prog_mouth = r_link(vert, frag);
+        GLuint vert = gl_compile_shader(GL_VERTEX_SHADER, r_mouth_vert_src, "face");
+        r_prog_mouth = gl_link_program(vert, frag, "face");
         glDeleteShader(vert);
         r_u_mouth_resolution = glGetUniformLocation(r_prog_mouth, "uResolution");
         r_u_mouth_color      = glGetUniformLocation(r_prog_mouth, "uColor");
@@ -483,6 +507,10 @@ void face_render(const FaceParams *p, float cx, float cy,
         float pd = pupil_dist * scale * openness_dampen * attention;
         float px = ecx + cosf(angle) * pd;
         float py = ecy + sinf(angle) * pd;
+        /* Blend idle look-around offset, fading out when mouse is nearby */
+        float idle_weight = 1.0f - attention;
+        px += p->pupil_offset_x * scale * idle_weight;
+        py += p->pupil_offset_y * scale * idle_weight;
         float pr = pupil_r * p->pupil_scale * scale;
 
         r_draw_ellipse(px, py, pr, pr,

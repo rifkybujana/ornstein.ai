@@ -2,6 +2,7 @@
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
 #import <CoreWLAN/CoreWLAN.h>
+#import <Carbon/Carbon.h>
 #import <mach/mach.h>
 
 #define GLFW_EXPOSE_NATIVE_COCOA
@@ -109,4 +110,44 @@ float platform_cpu_usage(void) {
 
     if (d_total == 0) return 0.0f;
     return 1.0f - (float)d_idle / (float)d_total;
+}
+
+/* ---------- Global Hotkey (Cmd+Shift+O via Carbon) ---------- */
+
+static volatile int g_hotkey_pending = 0;
+
+static OSStatus hotkey_handler(EventHandlerCallRef next, EventRef event, void *userData) {
+    (void)next; (void)event; (void)userData;
+    g_hotkey_pending = 1;
+    return noErr;
+}
+
+void platform_register_hotkey(void) {
+    EventTypeSpec eventType = { kEventClassKeyboard, kEventHotKeyPressed };
+    InstallApplicationEventHandler(&hotkey_handler, 1, &eventType, NULL, NULL);
+
+    EventHotKeyRef hotKeyRef;
+    EventHotKeyID hotKeyID = { 'ORNS', 1 };
+    /* keycode 31 = 'O', cmdKey | shiftKey */
+    RegisterEventHotKey(31, cmdKey | shiftKey, hotKeyID,
+                        GetApplicationEventTarget(), 0, &hotKeyRef);
+}
+
+int platform_hotkey_pending(void) {
+    if (g_hotkey_pending) {
+        g_hotkey_pending = 0;
+        return 1;
+    }
+    return 0;
+}
+
+void platform_show_window(GLFWwindow *window) {
+    NSWindow *nswin = glfwGetCocoaWindow(window);
+    [nswin makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+void platform_hide_window(GLFWwindow *window) {
+    NSWindow *nswin = glfwGetCocoaWindow(window);
+    [nswin orderOut:nil];
 }
