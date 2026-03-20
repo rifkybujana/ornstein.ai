@@ -9,3 +9,6 @@ build/
 *.dll
 .DS_Store
 compile_commands.json
+
+# llama.cpp build artifacts (submodule has its own gitignore)
+lib/llama.cpp/build/
