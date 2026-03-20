@@ -1,4 +1,5 @@
 #include "mood.h"
+#include "platform.h"
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
@@ -18,6 +19,13 @@ void mood_init(MoodState *ms) {
     ms->override_timer = 0.0f;
     ms->random_shift_timer = randf(15.0f, 30.0f);
     ms->random_emotion = EMOTION_NEUTRAL;
+    ms->system_poll_timer = 0.0f;
+    ms->battery_level = -1.0f;
+    ms->wifi_connected = 1;
+    ms->cpu_usage = 0.0f;
+    ms->prev_low_battery = 0;
+    ms->prev_high_cpu = 0;
+    ms->prev_wifi_connected = 1;
     srand((unsigned)time(NULL));
 }
 
@@ -60,6 +68,36 @@ Emotion mood_update(MoodState *ms, double mouse_x, double mouse_y, float dt) {
     /* Handle click (consume after one frame) */
     if (ms->mouse_clicked) {
         ms->mouse_clicked = 0;
+    }
+
+    /* Poll system state once per second */
+    ms->system_poll_timer -= dt;
+    if (ms->system_poll_timer <= 0.0f) {
+        ms->system_poll_timer = 1.0f;
+        ms->battery_level = platform_battery_level();
+        ms->wifi_connected = platform_wifi_connected();
+        ms->cpu_usage = platform_cpu_usage();
+
+        /* Detect transitions and trigger overrides */
+        int low_bat = (ms->battery_level >= 0.0f && ms->battery_level < 0.2f);
+        if (low_bat && !ms->prev_low_battery) {
+            ms->override_emotion = EMOTION_SAD;
+            ms->override_timer = 5.0f;
+        }
+        ms->prev_low_battery = low_bat;
+
+        int high_cpu = (ms->cpu_usage > 0.8f);
+        if (high_cpu && !ms->prev_high_cpu) {
+            ms->override_emotion = EMOTION_EXCITED;
+            ms->override_timer = 3.0f;
+        }
+        ms->prev_high_cpu = high_cpu;
+
+        if (!ms->wifi_connected && ms->prev_wifi_connected) {
+            ms->override_emotion = EMOTION_SURPRISED;
+            ms->override_timer = 2.0f;
+        }
+        ms->prev_wifi_connected = ms->wifi_connected;
     }
 
     /* Priority 1: Override (click surprise, system events) */

@@ -16,6 +16,15 @@ typedef struct {
     /* Random */
     float random_shift_timer;
     Emotion random_emotion;
+    /* System (polled) */
+    float  system_poll_timer;
+    float  battery_level;        /* 0.0-1.0, -1 if unknown */
+    int    wifi_connected;
+    float  cpu_usage;            /* 0.0-1.0 */
+    /* Previous state (for transition detection) */
+    int    prev_low_battery;
+    int    prev_high_cpu;
+    int    prev_wifi_connected;
 } MoodState;
 
 void mood_init(MoodState *ms);

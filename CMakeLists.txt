@@ -23,5 +23,6 @@ if(APPLE)
         "-framework Cocoa"
         "-framework IOKit"
         "-framework CoreVideo"
+        "-framework CoreWLAN"
     )
 endif()
