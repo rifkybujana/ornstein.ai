@@ -109,7 +109,7 @@ Emotion mood_update(MoodState *ms, double mouse_x, double mouse_y, float dt) {
     }
 
     /* Priority 2: Mouse behavior */
-    if (ms->cursor_speed > 800.0f)
+    if (ms->cursor_speed > 500.0f)
         return EMOTION_EXCITED;
 
     if (ms->cursor_in_window && ms->cursor_speed > 20.0f)
@@ -129,8 +129,8 @@ Emotion mood_update(MoodState *ms, double mouse_x, double mouse_y, float dt) {
     }
 
     /* Idle escalation */
-    if (ms->idle_time > 120.0f) return EMOTION_SLEEPY;
-    if (ms->idle_time > 30.0f)  return EMOTION_BORED;
+    if (ms->idle_time > 60.0f) return EMOTION_SLEEPY;
+    if (ms->idle_time > 15.0f) return EMOTION_BORED;
 
     /* Time of day baseline */
     return time_of_day_mood();

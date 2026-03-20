@@ -49,7 +49,7 @@ void face_init(FaceState *fs) {
 }
 
 FaceParams face_update(FaceState *fs, float dt) {
-    const float LERP_SPEED = 8.0f;
+    const float LERP_SPEED = 5.0f;
     const float BLINK_DURATION = 0.15f;
     const float YAWN_DURATION = 2.0f;
 
@@ -472,7 +472,7 @@ void face_render(const FaceParams *p, float cx, float cy,
 
     /* ── Draw mouth (bezier curve) ─────────────────────────────── */
     {
-        float mouth_y = cy + 90.0f * scale;
+        float mouth_y = cy + 65.0f * scale;
         float half_w  = 30.0f * p->mouth_width * scale;
         float curve_offset = p->mouth_curve * 15.0f * scale;
         float thickness = 2.5f * scale;
