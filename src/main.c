@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -137,11 +138,7 @@ int main(void) {
     /* The build produces it at build/bin/llama-server */
     const char *server_path = "bin/llama-server";
 
-    if (llm_init(model_path, server_path) == 0) {
-        printf("LLM server started\n");
-    } else {
-        printf("LLM server failed to start (continuing without chat AI)\n");
-    }
+    llm_init(model_path, server_path);
 
     MoodState mood;
     mood_init(&mood);
@@ -165,10 +162,8 @@ int main(void) {
         float mx = (float)mouse_x * scale;
         float my = (float)mouse_y * scale;
 
-        /* Layout: if chat visible, face on left, chat on right */
-        float chat_w = 300.0f * scale;
-        float face_area_w = (g_chat && chat_visible(g_chat)) ? (float)fb_w - chat_w : (float)fb_w;
-        float cx = face_area_w * 0.5f;
+        /* Face always centered on full screen */
+        float cx = (float)fb_w * 0.5f;
         float cy = (float)fb_h * 0.5f;
 
         /* Update mood → face → chat → LLM */
@@ -181,9 +176,79 @@ int main(void) {
         /* Render face */
         face_render(&params, cx, cy, mx, my, scale, (float)fb_w, (float)fb_h);
 
-        /* Render chat panel */
+        /* Render chat overlay or hint */
         if (g_chat && chat_visible(g_chat)) {
-            chat_render(g_chat, face_area_w, chat_w, (float)fb_h, scale, (float)fb_w);
+            chat_render(g_chat, (float)fb_w, (float)fb_h, scale);
+        } else {
+            text_draw("Tab to chat", (float)fb_w - 120.0f * scale, (float)fb_h - 20.0f * scale,
+                      1.0f * scale, 0.3f, 0.3f, 0.35f, (float)fb_w, (float)fb_h);
+        }
+
+        /* Show download / startup status (centered, no panel) */
+        {
+            int pct = 0;
+            float mb_done = 0, mb_total = 0;
+            char err_msg[128] = "";
+            int st = llm_status(&pct, &mb_done, &mb_total, err_msg, sizeof(err_msg));
+            float ts = 1.0f * scale;
+            float lh = text_line_height(ts);
+            float center_x = (float)fb_w * 0.5f;
+            float center_y = (float)fb_h * 0.65f;
+
+            if (st == 1) {
+                /* Downloading */
+                int dots = ((int)(now * 2.0)) % 4;
+                const char *dot_str[] = {"", ".", "..", "..."};
+                char title[48];
+                snprintf(title, sizeof(title), "Downloading model%s", dot_str[dots]);
+                float tw = text_width(title, ts);
+                text_draw(title, center_x - tw * 0.5f, center_y,
+                          ts, 0.85f, 0.85f, 0.9f, (float)fb_w, (float)fb_h);
+
+                /* Progress bar */
+                float bar_w = 200.0f * scale;
+                float bar_h = 8.0f * scale;
+                float bar_x = center_x - bar_w * 0.5f;
+                float bar_y = center_y + lh * 1.5f;
+                float fill = (float)pct / 100.0f;
+
+                text_draw_rect(bar_x, bar_y, bar_w, bar_h,
+                               0.2f, 0.2f, 0.25f, 1.0f,
+                               (float)fb_w, (float)fb_h);
+                if (fill > 0.0f)
+                    text_draw_rect(bar_x, bar_y, bar_w * fill, bar_h,
+                                   0.4f, 0.7f, 1.0f, 1.0f,
+                                   (float)fb_w, (float)fb_h);
+
+                /* MB info */
+                char mb_str[48];
+                snprintf(mb_str, sizeof(mb_str), "%.0f / %.0f MB  %d%%", mb_done, mb_total, pct);
+                float mw = text_width(mb_str, ts);
+                text_draw(mb_str, center_x - mw * 0.5f, bar_y + bar_h + 6.0f * scale,
+                          ts, 0.4f, 0.4f, 0.5f, (float)fb_w, (float)fb_h);
+
+            } else if (st == 2 || st == 3) {
+                /* Starting server */
+                int dots = ((int)(now * 2.0)) % 4;
+                const char *dot_str[] = {"", ".", "..", "..."};
+                char title[48];
+                snprintf(title, sizeof(title), "Starting server%s", dot_str[dots]);
+                float tw = text_width(title, ts);
+                text_draw(title, center_x - tw * 0.5f, center_y,
+                          ts, 0.85f, 0.85f, 0.9f, (float)fb_w, (float)fb_h);
+
+            } else if (st == -1) {
+                /* Error */
+                const char *etitle = "Download failed";
+                float ew = text_width(etitle, ts);
+                text_draw(etitle, center_x - ew * 0.5f, center_y,
+                          ts, 0.9f, 0.35f, 0.35f, (float)fb_w, (float)fb_h);
+                if (err_msg[0]) {
+                    float mw = text_width(err_msg, ts);
+                    text_draw(err_msg, center_x - mw * 0.5f, center_y + lh * 1.5f,
+                              ts, 0.5f, 0.4f, 0.4f, (float)fb_w, (float)fb_h);
+                }
+            }
         }
 
         glfwSwapBuffers(window);

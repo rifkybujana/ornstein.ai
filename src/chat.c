@@ -14,12 +14,13 @@
    ══════════════════════════════════════════════════════════════════════ */
 
 #define CHAT_MAX_MESSAGES 128
-#define CHAT_MAX_MSG_LEN 512
+#define CHAT_MAX_MSG_LEN 4096
 #define CHAT_INPUT_MAX 256
 
 typedef struct {
     char text[CHAT_MAX_MSG_LEN];
-    int is_user;  /* 1 = user, 0 = pet */
+    int is_user;     /* 1 = user, 0 = pet */
+    int is_thinking; /* 1 = reasoning/thinking */
 } ChatMessage;
 
 struct ChatState {
@@ -31,7 +32,9 @@ struct ChatState {
     int input_len;
     float scroll_offset;
     int generating;  /* 1 if LLM is currently generating */
-    char pending_response[CHAT_MAX_MSG_LEN];  /* accumulates streamed tokens */
+    char pending_thinking[CHAT_MAX_MSG_LEN];  /* accumulates thinking tokens */
+    int thinking_len;
+    char pending_response[CHAT_MAX_MSG_LEN];  /* accumulates response tokens */
     int pending_len;
     Emotion current_mood;  /* cached for LLM context */
     float cursor_blink;    /* timer for blinking cursor */
@@ -166,22 +169,53 @@ static const char *emotion_name(Emotion e) {
    LLM token callback
    ══════════════════════════════════════════════════════════════════════ */
 
-static void on_token(const char *token, int done, void *userdata) {
+static void on_token(const char *token, int thinking, int done, void *userdata) {
     ChatState *cs = (ChatState *)userdata;
     if (!done) {
-        /* Append token to pending response */
         int len = (int)strlen(token);
-        if (cs->pending_len + len < CHAT_MAX_MSG_LEN - 1) {
-            memcpy(cs->pending_response + cs->pending_len, token, len);
-            cs->pending_len += len;
-            cs->pending_response[cs->pending_len] = '\0';
+        if (thinking) {
+            /* Rolling thinking buffer — keep latest text when full */
+            if (cs->thinking_len + len >= CHAT_MAX_MSG_LEN - 1) {
+                int keep = CHAT_MAX_MSG_LEN / 2;
+                int start = cs->thinking_len - keep;
+                if (start < 0) start = 0;
+                memmove(cs->pending_thinking, cs->pending_thinking + start, cs->thinking_len - start);
+                cs->thinking_len -= start;
+                cs->pending_thinking[cs->thinking_len] = '\0';
+            }
+            if (cs->thinking_len + len < CHAT_MAX_MSG_LEN - 1) {
+                memcpy(cs->pending_thinking + cs->thinking_len, token, len);
+                cs->thinking_len += len;
+                cs->pending_thinking[cs->thinking_len] = '\0';
+            }
+        } else {
+            /* Append to response buffer */
+            if (cs->pending_len + len < CHAT_MAX_MSG_LEN - 1) {
+                memcpy(cs->pending_response + cs->pending_len, token, len);
+                cs->pending_len += len;
+                cs->pending_response[cs->pending_len] = '\0';
+            }
         }
     } else {
-        /* Generation complete — move pending to messages */
+        /* Generation complete — commit thinking (last portion) then response */
+        if (cs->thinking_len > 0 && cs->msg_count < CHAT_MAX_MESSAGES) {
+            ChatMessage *msg = &cs->messages[cs->msg_count++];
+            int copy_len = cs->thinking_len;
+            const char *src = cs->pending_thinking;
+            if (copy_len >= CHAT_MAX_MSG_LEN) {
+                src += copy_len - (CHAT_MAX_MSG_LEN - 1);
+                copy_len = CHAT_MAX_MSG_LEN - 1;
+            }
+            memcpy(msg->text, src, copy_len);
+            msg->text[copy_len] = '\0';
+            msg->is_user = 0;
+            msg->is_thinking = 1;
+        }
         if (cs->pending_len > 0 && cs->msg_count < CHAT_MAX_MESSAGES) {
             ChatMessage *msg = &cs->messages[cs->msg_count++];
             memcpy(msg->text, cs->pending_response, cs->pending_len + 1);
             msg->is_user = 0;
+            msg->is_thinking = 0;
         }
         cs->generating = 0;
     }
@@ -201,6 +235,8 @@ ChatState *chat_create(void) {
     cs->input[0] = '\0';
     cs->scroll_offset = 0.0f;
     cs->generating = 0;
+    cs->thinking_len = 0;
+    cs->pending_thinking[0] = '\0';
     cs->pending_len = 0;
     cs->pending_response[0] = '\0';
     cs->current_mood = EMOTION_NEUTRAL;
@@ -218,12 +254,10 @@ int chat_toggle(ChatState *cs) {
         if (cs->msg_count == 0 && !llm_ready()) {
             ChatMessage *msg = &cs->messages[cs->msg_count++];
             snprintf(msg->text, CHAT_MAX_MSG_LEN,
-                "No model found.\n\n"
-                "Set ORNSTEIN_MODEL=/path/to/model.gguf\n"
-                "or place a GGUF file at\n"
-                "~/.ornstein/model.gguf\n\n"
-                "Recommended: TinyLlama-1.1B\n"
-                "or SmolLM-1.7B");
+                "LLM not available.\n\n"
+                "Model download may have\n"
+                "failed. Check the terminal\n"
+                "for details.");
             msg->is_user = 0;
         }
     } else {
@@ -282,7 +316,9 @@ void chat_on_key(ChatState *cs, int key, int action, int mods) {
                 msg->is_user = 1;
             }
 
-            /* Clear pending response, start generation */
+            /* Clear pending buffers, start generation */
+            cs->pending_thinking[0] = '\0';
+            cs->thinking_len = 0;
             cs->pending_response[0] = '\0';
             cs->pending_len = 0;
             cs->generating = 1;
@@ -330,38 +366,28 @@ void chat_update(ChatState *cs, Emotion mood, float dt) {
 
 /* ── Rendering ──────────────────────────────────────────────────────── */
 
-void chat_render(ChatState *cs, float panel_x, float panel_w,
-                 float fb_h, float scale, float fb_w) {
+void chat_render(ChatState *cs, float fb_w, float fb_h, float scale) {
     if (!cs || !cs->visible) return;
 
-    /* Layout constants (logical pixels, scaled to fb pixels) */
-    float padding = 12.0f * scale;
+    /* Layout constants */
+    float padding = 16.0f * scale;
     float msg_spacing = 8.0f * scale;
     float input_box_h = 36.0f * scale;
-    float input_pad = 8.0f * scale;
+    float input_pad = 10.0f * scale;
     float text_scale = 1.5f * scale;
     float line_h = text_line_height(text_scale);
 
-    /* 1. Panel background */
-    c_draw_rect(panel_x, 0.0f, panel_w, fb_h,
-                0.08f, 0.08f, 0.09f, 0.95f,
-                fb_w, fb_h);
-
-    /* 2. Input box at bottom */
+    /* Input box: centered at bottom */
+    float input_max_w = 500.0f * scale;
+    float input_box_w = fb_w * 0.5f;
+    if (input_box_w > input_max_w) input_box_w = input_max_w;
+    if (input_box_w < 200.0f * scale) input_box_w = 200.0f * scale;
+    float input_box_x = (fb_w - input_box_w) * 0.5f;
     float input_box_y = fb_h - input_box_h - padding;
-    float input_box_x = panel_x + padding;
-    float input_box_w = panel_w - padding * 2.0f;
-
-    /* Separator line above input */
-    float sep_h = 1.0f * scale;
-    c_draw_rect(panel_x + padding, input_box_y - msg_spacing,
-                panel_w - padding * 2.0f, sep_h,
-                0.25f, 0.25f, 0.27f, 1.0f,
-                fb_w, fb_h);
 
     /* Input box background */
     c_draw_rect(input_box_x, input_box_y, input_box_w, input_box_h,
-                0.15f, 0.15f, 0.16f, 1.0f,
+                0.15f, 0.15f, 0.16f, 0.9f,
                 fb_w, fb_h);
 
     /* Input text */
@@ -371,6 +397,9 @@ void chat_render(ChatState *cs, float panel_x, float panel_w,
     if (cs->input_len > 0) {
         text_draw(cs->input, input_text_x, input_text_y, text_scale,
                   1.0f, 1.0f, 1.0f, fb_w, fb_h);
+    } else {
+        text_draw("Type a message...", input_text_x, input_text_y, text_scale,
+                  0.4f, 0.4f, 0.45f, fb_w, fb_h);
     }
 
     /* Blinking cursor */
@@ -382,56 +411,69 @@ void chat_render(ChatState *cs, float panel_x, float panel_w,
                     fb_w, fb_h);
     }
 
-    /* 3. Messages area (above separator) */
+    /* Messages area: centered above input, same width */
+    float msgs_x = input_box_x;
+    float msgs_w = input_box_w;
+    float msgs_bottom = input_box_y - msg_spacing;
     float msgs_top = padding;
-    float msgs_bottom = input_box_y - msg_spacing - sep_h - msg_spacing;
-    float msgs_x = panel_x + padding;
-    float msgs_w = panel_w - padding * 2.0f;
 
-    /* Enable scissor test to clip messages to the message area */
+    /* Scissor clip messages */
     glEnable(GL_SCISSOR_TEST);
-    glScissor((int)panel_x, (int)(fb_h - msgs_bottom),
-              (int)panel_w, (int)(msgs_bottom - msgs_top));
+    glScissor((int)msgs_x, (int)(fb_h - msgs_bottom),
+              (int)msgs_w, (int)(msgs_bottom - msgs_top));
 
-    /* Render messages from bottom up, accounting for scroll */
+    /* Render messages from bottom up */
     float y = msgs_bottom;
     y += cs->scroll_offset;
 
-    /* First, render the pending (streaming) response if generating */
-    if (cs->generating && cs->pending_len > 0) {
-        float h = text_draw_wrapped(cs->pending_response,
-                                    msgs_x, 0, msgs_w, text_scale,
-                                    0, 0, 0, fb_w, fb_h);
-        /* text_draw_wrapped returns height but we called it with y=0
-           just to measure — we need to call it again at the right position */
-        y -= h;
-        /* Draw "..." indicator if still generating */
-        text_draw_wrapped(cs->pending_response,
-                          msgs_x, y, msgs_w, text_scale,
-                          0.9f, 0.9f, 0.85f, fb_w, fb_h);
-        y -= msg_spacing;
+    /* Pending streaming content */
+    if (cs->generating && (cs->pending_len > 0 || cs->thinking_len > 0)) {
+        if (cs->pending_len > 0) {
+            float h = text_draw_wrapped(cs->pending_response,
+                                        msgs_x, fb_h * 2, msgs_w, text_scale,
+                                        0, 0, 0, fb_w, fb_h);
+            y -= h;
+            text_draw_wrapped(cs->pending_response,
+                              msgs_x, y, msgs_w, text_scale,
+                              0.9f, 0.9f, 0.85f, fb_w, fb_h);
+            y -= msg_spacing;
+        }
+        if (cs->thinking_len > 0) {
+            const char *think_text = cs->pending_thinking;
+            if (cs->thinking_len > 200) {
+                think_text = cs->pending_thinking + cs->thinking_len - 200;
+                const char *nl = strchr(think_text, '\n');
+                if (nl) think_text = nl + 1;
+            }
+            float h = text_draw_wrapped(think_text,
+                                        msgs_x, fb_h * 2, msgs_w, text_scale,
+                                        0, 0, 0, fb_w, fb_h);
+            y -= h;
+            text_draw_wrapped(think_text,
+                              msgs_x, y, msgs_w, text_scale,
+                              0.45f, 0.45f, 0.5f, fb_w, fb_h);
+            y -= msg_spacing;
+        }
     } else if (cs->generating) {
-        /* Show typing indicator */
         text_draw("...", msgs_x, y - line_h, text_scale,
                   0.5f, 0.5f, 0.5f, fb_w, fb_h);
         y -= line_h + msg_spacing;
     }
 
-    /* Render messages in reverse order (newest at bottom) */
+    /* Historical messages (newest at bottom) */
     for (int i = cs->msg_count - 1; i >= 0; i--) {
         ChatMessage *msg = &cs->messages[i];
-
-        /* Measure height of this message */
         float h = text_draw_wrapped(msg->text,
-                                    msgs_x, 0, msgs_w, text_scale,
+                                    msgs_x, fb_h * 2, msgs_w, text_scale,
                                     0, 0, 0, fb_w, fb_h);
         y -= h;
 
-        /* Only draw if visible */
         if (y < msgs_bottom && y + h > msgs_top) {
             float r, g, b;
             if (msg->is_user) {
                 r = 0.7f; g = 0.8f; b = 1.0f;
+            } else if (msg->is_thinking) {
+                r = 0.45f; g = 0.45f; b = 0.5f;
             } else {
                 r = 0.9f; g = 0.9f; b = 0.85f;
             }
@@ -441,8 +483,6 @@ void chat_render(ChatState *cs, float panel_x, float panel_w,
         }
 
         y -= msg_spacing;
-
-        /* Stop if we've scrolled past the top */
         if (y + cs->scroll_offset < msgs_top - fb_h) break;
     }
 

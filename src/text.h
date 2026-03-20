@@ -26,6 +26,13 @@ float text_draw_wrapped(const char *str, float x, float y,
                         float r, float g, float b,
                         float fb_w, float fb_h);
 
+/* Draw a filled rectangle at pixel coordinates.
+   x, y: top-left corner. w, h: size.
+   r, g, b, a: color with alpha. */
+void text_draw_rect(float x, float y, float w, float h,
+                    float r, float g, float b, float a,
+                    float fb_w, float fb_h);
+
 /* Cleanup GL resources. */
 void text_cleanup(void);
 

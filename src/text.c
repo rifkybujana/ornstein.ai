@@ -164,6 +164,12 @@ static GLint t_u_resolution;
 static GLint t_u_font_atlas;
 static GLint t_u_color;
 
+/* Rect shader resources */
+static GLuint r_prog;
+static GLuint r_vao, r_vbo;
+static GLint  r_u_resolution;
+static GLint  r_u_color;
+
 /* Max characters per single text_draw call */
 #define MAX_CHARS 512
 /* 6 vertices per char, 4 floats per vertex (x, y, u, v) */
@@ -185,6 +191,25 @@ static const char *t_vert_src =
     "    ndc.y = -ndc.y;\n"
     "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
     "    vTexCoord = aTexCoord;\n"
+    "}\n";
+
+/* Rect shaders — simple solid color quad */
+static const char *r_vert_src =
+    "#version 410 core\n"
+    "layout (location = 0) in vec2 aPos;\n"
+    "uniform vec2 uResolution;\n"
+    "void main() {\n"
+    "    vec2 ndc = (aPos / uResolution) * 2.0 - 1.0;\n"
+    "    ndc.y = -ndc.y;\n"
+    "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
+    "}\n";
+
+static const char *r_frag_src =
+    "#version 410 core\n"
+    "uniform vec4 uColor;\n"
+    "out vec4 FragColor;\n"
+    "void main() {\n"
+    "    FragColor = uColor;\n"
     "}\n";
 
 static const char *t_frag_src =
@@ -269,7 +294,7 @@ static void t_build_atlas(void) {
    ══════════════════════════════════════════════════════════════════════ */
 
 void text_init(void) {
-    /* Compile shaders */
+    /* Compile text shaders */
     GLuint vert = t_compile(GL_VERTEX_SHADER, t_vert_src);
     GLuint frag = t_compile(GL_FRAGMENT_SHADER, t_frag_src);
     t_prog = t_link(vert, frag);
@@ -279,6 +304,16 @@ void text_init(void) {
     t_u_resolution = glGetUniformLocation(t_prog, "uResolution");
     t_u_font_atlas = glGetUniformLocation(t_prog, "uFontAtlas");
     t_u_color      = glGetUniformLocation(t_prog, "uColor");
+
+    /* Compile rect shaders */
+    GLuint rv = t_compile(GL_VERTEX_SHADER, r_vert_src);
+    GLuint rf = t_compile(GL_FRAGMENT_SHADER, r_frag_src);
+    r_prog = t_link(rv, rf);
+    glDeleteShader(rv);
+    glDeleteShader(rf);
+
+    r_u_resolution = glGetUniformLocation(r_prog, "uResolution");
+    r_u_color      = glGetUniformLocation(r_prog, "uColor");
 
     /* Build font atlas texture */
     t_build_atlas();
@@ -290,14 +325,22 @@ void text_init(void) {
     glBindBuffer(GL_ARRAY_BUFFER, t_vbo);
     glBufferData(GL_ARRAY_BUFFER, VBO_SIZE, NULL, GL_DYNAMIC_DRAW);
 
-    /* aPos: location 0, 2 floats */
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
     glEnableVertexAttribArray(0);
-    /* aTexCoord: location 1, 2 floats */
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                           (void *)(2 * sizeof(float)));
     glEnableVertexAttribArray(1);
+    glBindVertexArray(0);
 
+    /* Create VAO/VBO for rect quads (2 floats per vertex, 6 verts) */
+    glGenVertexArrays(1, &r_vao);
+    glGenBuffers(1, &r_vbo);
+    glBindVertexArray(r_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, r_vbo);
+    glBufferData(GL_ARRAY_BUFFER, 6 * 2 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+    glEnableVertexAttribArray(0);
     glBindVertexArray(0);
 }
 
@@ -532,9 +575,40 @@ float text_draw_wrapped(const char *str, float x, float y,
     return (cursor_y - start_y) + gh;
 }
 
+void text_draw_rect(float x, float y, float w, float h,
+                    float r, float g, float b, float a,
+                    float fb_w, float fb_h) {
+    float verts[12] = {
+        x,     y,
+        x + w, y,
+        x + w, y + h,
+        x,     y,
+        x + w, y + h,
+        x,     y + h,
+    };
+
+    glUseProgram(r_prog);
+    glUniform2f(r_u_resolution, fb_w, fb_h);
+    glUniform4f(r_u_color, r, g, b, a);
+
+    glBindVertexArray(r_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, r_vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDisable(GL_BLEND);
+
+    glBindVertexArray(0);
+}
+
 void text_cleanup(void) {
     glDeleteTextures(1, &t_font_tex);
     glDeleteProgram(t_prog);
     glDeleteVertexArrays(1, &t_vao);
     glDeleteBuffers(1, &t_vbo);
+    glDeleteProgram(r_prog);
+    glDeleteVertexArrays(1, &r_vao);
+    glDeleteBuffers(1, &r_vbo);
 }

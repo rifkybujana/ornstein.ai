@@ -3,8 +3,9 @@
 
 /* Token callback: called on the main thread from llm_poll().
    token is a null-terminated string fragment.
+   thinking=1 means this token is part of the model's reasoning.
    done=1 means generation is complete. */
-typedef void (*llm_token_cb)(const char *token, int done, void *userdata);
+typedef void (*llm_token_cb)(const char *token, int thinking, int done, void *userdata);
 
 /* Initialize the LLM subsystem.
    model_path: path to GGUF model file.
@@ -26,6 +27,15 @@ int llm_poll(void);
 
 /* Returns 1 if the server is ready (health check passed). */
 int llm_ready(void);
+
+/* Returns download state:
+   0 = no download needed / ready
+   1 = downloading (percent, mb_done, mb_total set)
+   2 = download complete, starting server
+   3 = server starting (health polling)
+  -1 = download/start failed (msg set) */
+int llm_status(int *percent, float *mb_done, float *mb_total,
+               char *msg, int msg_size);
 
 /* Shutdown: kill server, join threads, free resources. */
 void llm_shutdown(void);

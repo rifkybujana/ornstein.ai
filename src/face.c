@@ -456,7 +456,7 @@ void face_render(const FaceParams *p, float cx, float cy,
         float dx = mouse_x - ecx;
         float dy = mouse_y - ecy;
         float dist = sqrtf(dx * dx + dy * dy);
-        float notice_radius = 250.0f * scale; /* how close cursor must be */
+        float notice_radius = 1000.0f * scale; /* how close cursor must be */
         /* Fade from full tracking to centered as cursor moves away */
         float attention = 1.0f - dist / notice_radius;
         if (attention < 0.0f) attention = 0.0f;

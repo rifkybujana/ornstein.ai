@@ -30,13 +30,10 @@ void chat_on_scroll(ChatState *cs, double yoffset);
    mood: current emotion for LLM context. */
 void chat_update(ChatState *cs, Emotion mood, float dt);
 
-/* Render the chat panel.
-   panel_x: left edge of the panel in fb pixels.
-   panel_w: width of the panel in fb pixels.
-   fb_h: framebuffer height.
+/* Render the chat overlay (input at bottom center, messages above).
+   fb_w, fb_h: framebuffer dimensions.
    scale: HiDPI scale factor. */
-void chat_render(ChatState *cs, float panel_x, float panel_w,
-                 float fb_h, float scale, float fb_w);
+void chat_render(ChatState *cs, float fb_w, float fb_h, float scale);
 
 /* Free resources. */
 void chat_destroy(ChatState *cs);
