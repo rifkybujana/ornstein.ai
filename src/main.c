@@ -39,11 +39,15 @@ static void init_ellipse(void) {
 static const char *vert_src =
     "#version 410 core\n"
     "layout (location = 0) in vec2 aPos;\n"
-    "uniform vec2 uCenter;\n"   /* pixel coords */
-    "uniform vec2 uRadius;\n"   /* pixel half-widths */
+    "uniform vec2 uCenter;\n"
+    "uniform vec2 uRadius;\n"
     "uniform vec2 uResolution;\n"
+    "uniform float uAngle;\n"
     "void main() {\n"
-    "    vec2 px = uCenter + aPos * uRadius;\n"
+    "    vec2 scaled = aPos * uRadius;\n"
+    "    float c = cos(uAngle), s = sin(uAngle);\n"
+    "    vec2 rotated = vec2(scaled.x*c - scaled.y*s, scaled.x*s + scaled.y*c);\n"
+    "    vec2 px = uCenter + rotated;\n"
     "    vec2 ndc = (px / uResolution) * 2.0 - 1.0;\n"
     "    ndc.y = -ndc.y;\n"
     "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
@@ -58,7 +62,7 @@ static const char *frag_src =
     "}\n";
 
 static GLuint prog;
-static GLint u_center, u_radius, u_resolution, u_color;
+static GLint u_center, u_radius, u_resolution, u_color, u_angle;
 
 static GLuint compile(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
@@ -89,14 +93,16 @@ static void init_shader(void) {
     u_radius     = glGetUniformLocation(prog, "uRadius");
     u_resolution = glGetUniformLocation(prog, "uResolution");
     u_color      = glGetUniformLocation(prog, "uColor");
+    u_angle      = glGetUniformLocation(prog, "uAngle");
 }
 
 /* ── Draw an ellipse at (cx, cy) with radii (rx, ry) ──────────────── */
 
 static void draw_ellipse(float cx, float cy, float rx, float ry,
-                         float r, float g, float b) {
+                         float angle, float r, float g, float b) {
     glUniform2f(u_center, cx, cy);
     glUniform2f(u_radius, rx, ry);
+    glUniform1f(u_angle, angle);
     glUniform3f(u_color, r, g, b);
     glBindVertexArray(ellipse_vao);
     glDrawArrays(GL_TRIANGLE_FAN, 0, SEGMENTS + 2);
@@ -173,17 +179,13 @@ int main(void) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    /* Eye dimensions (in framebuffer pixels) */
-    const float eye_rx   = 60.0f;   /* sclera horizontal radius */
-    const float eye_ry   = 80.0f;   /* sclera vertical radius (taller) */
-    const float iris_r   = 28.0f;
-    const float pupil_r  = 12.0f;
-    const float eye_gap  = 180.0f;  /* distance between eye centers */
-
-    /* Colors */
-    const float bone[]  = {0.87f, 0.84f, 0.78f};  /* sclera / bone white */
-    const float iris_c[] = {0.30f, 0.22f, 0.15f};  /* dark brown iris */
-    const float pupil[] = {0.05f, 0.05f, 0.05f};   /* near-black pupil */
+    /* Hollow Knight style: simple white ovals, no iris/pupil.
+       Eyes are tall, narrow, slightly tilted inward, close together. */
+    const float eye_rx  = 22.0f;   /* narrow */
+    const float eye_ry  = 55.0f;   /* tall */
+    const float eye_gap = 70.0f;   /* close together */
+    const float eye_tilt = 0.15f;  /* inward tilt (radians) */
+    const float max_look = 8.0f;   /* subtle shift toward cursor */
 
     while (!glfwWindowShouldClose(window)) {
         glViewport(0, 0, fb_w, fb_h);
@@ -197,39 +199,31 @@ int main(void) {
         float cx = (float)fb_w * 0.5f;
         float cy = (float)fb_h * 0.5f;
 
-        /* Cursor in framebuffer coords */
         float mx = (float)mouse_x * scale;
         float my = (float)mouse_y * scale;
 
-        /* Max distance the iris/pupil can travel from eye center */
-        float max_travel = (eye_ry - iris_r) * 0.6f;
-
         for (int i = 0; i < 2; i++) {
-            float ex = cx + (i == 0 ? -eye_gap * 0.5f : eye_gap * 0.5f) * scale;
+            float side = (i == 0) ? -1.0f : 1.0f;
+            float ex = cx + side * eye_gap * 0.5f * scale;
             float ey = cy;
 
-            /* Direction from eye center to cursor */
+            /* Subtle shift toward cursor */
             float dx = mx - ex;
             float dy = my - ey;
             float dist = sqrtf(dx * dx + dy * dy);
-
-            /* Iris/pupil offset clamped to max travel */
             float ox = 0.0f, oy = 0.0f;
             if (dist > 0.001f) {
-                float t = fminf(dist, max_travel * scale) / dist;
+                float t = fminf(dist, max_look * scale) / dist;
                 ox = dx * t;
                 oy = dy * t;
             }
 
-            /* Sclera */
-            draw_ellipse(ex, ey, eye_rx * scale, eye_ry * scale,
-                         bone[0], bone[1], bone[2]);
-            /* Iris */
-            draw_ellipse(ex + ox, ey + oy, iris_r * scale, iris_r * scale,
-                         iris_c[0], iris_c[1], iris_c[2]);
-            /* Pupil */
-            draw_ellipse(ex + ox, ey + oy, pupil_r * scale, pupil_r * scale,
-                         pupil[0], pupil[1], pupil[2]);
+            /* Tilt inward: left eye tilts right, right eye tilts left */
+            float angle = side * eye_tilt;
+
+            draw_ellipse(ex + ox, ey + oy,
+                         eye_rx * scale, eye_ry * scale,
+                         angle, 1.0f, 1.0f, 1.0f);
         }
 
         glfwSwapBuffers(window);
