@@ -45,6 +45,7 @@ void face_init(FaceState *fs) {
     fs->target_emotion = EMOTION_NEUTRAL;
     fs->blink_timer = randf(2.0f, 6.0f);
     fs->blink_phase = 0.0f;
+    fs->double_blink_pending = 0;
     fs->yawn_timer = randf(8.0f, 15.0f);
     fs->yawn_phase = 0.0f;
 }
@@ -64,16 +65,26 @@ FaceParams face_update(FaceState *fs, float dt) {
     fs->blink_timer -= dt;
     if (fs->blink_timer <= 0.0f && fs->blink_phase <= 0.0f) {
         fs->blink_phase = BLINK_DURATION;
-        fs->blink_timer = randf(2.0f, 6.0f);
+        if (fs->double_blink_pending) {
+            fs->double_blink_pending = 0;
+            fs->blink_timer = randf(2.0f, 6.0f);
+        } else {
+            /* 20% chance of double blink */
+            if (randf(0.0f, 1.0f) < 0.2f) {
+                fs->double_blink_pending = 1;
+                fs->blink_timer = 0.15f; /* short gap before second blink */
+            } else {
+                fs->blink_timer = randf(2.0f, 6.0f);
+            }
+        }
     }
     if (fs->blink_phase > 0.0f) {
         fs->blink_phase -= dt;
-        /* Triangle wave: closes then opens */
         float half = BLINK_DURATION * 0.5f;
         float elapsed = BLINK_DURATION - fs->blink_phase;
         float blink_t = (elapsed < half)
-            ? elapsed / half            /* closing: 0->1 */
-            : 1.0f - (elapsed - half) / half;  /* opening: 1->0 */
+            ? elapsed / half
+            : 1.0f - (elapsed - half) / half;
         result.eye_openness *= (1.0f - blink_t);
         if (fs->blink_phase < 0.0f) fs->blink_phase = 0.0f;
     }

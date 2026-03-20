@@ -38,6 +38,7 @@ typedef struct {
     /* blink */
     float blink_timer;        /* countdown to next blink */
     float blink_phase;        /* 0 = not blinking, >0 = in blink */
+    int   double_blink_pending; /* 1 = second blink queued */
     /* yawn */
     float yawn_timer;         /* countdown to next yawn (only in SLEEPY) */
     float yawn_phase;         /* 0 = not yawning, >0 = in yawn */
