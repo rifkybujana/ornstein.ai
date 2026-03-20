@@ -169,6 +169,9 @@ static GLint t_u_color;
 /* 6 vertices per char, 4 floats per vertex (x, y, u, v) */
 #define VBO_SIZE (MAX_CHARS * 6 * 4 * sizeof(float))
 
+/* Shared scratch buffer for vertex data (single-threaded text rendering) */
+static float t_vert_scratch[MAX_CHARS * 6 * 4];
+
 /* ── Shaders ─────────────────────────────────────────────────────── */
 
 static const char *t_vert_src =
@@ -309,7 +312,7 @@ void text_draw(const char *str, float x, float y, float scale,
     float gh = FONT_H * scale;  /* glyph height in pixels */
 
     /* Build vertex data: 6 verts per char, 4 floats per vert */
-    float verts[MAX_CHARS * 6 * 4];
+    float *verts = t_vert_scratch;
     int vert_count = 0;
 
     float cursor_x = x;
@@ -320,6 +323,10 @@ void text_draw(const char *str, float x, float y, float scale,
         if (c == '\n') {
             cursor_x = x;
             cursor_y += gh;
+            continue;
+        }
+        if (c == ' ') {
+            cursor_x += gw;
             continue;
         }
         if (c < FONT_FIRST || c > FONT_LAST) c = '?';
@@ -415,7 +422,7 @@ float text_draw_wrapped(const char *str, float x, float y,
 
     /* First pass: compute wrapped layout into a temporary buffer.
        We build one large string of positioned characters and batch-draw. */
-    float verts[MAX_CHARS * 6 * 4];
+    float *verts = t_vert_scratch;
     int vert_count = 0;
     int char_count = 0;
 
