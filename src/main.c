@@ -10,16 +10,16 @@
 /* ── Ellipse geometry ──────────────────────────────────────────────── */
 
 #define SEGMENTS 64
+#define PI 3.14159265358979323846f
 
 static GLuint ellipse_vao, ellipse_vbo;
 
 static void init_ellipse(void) {
-    /* Unit circle fan: center + SEGMENTS + 1 (to close the loop) */
     float verts[(SEGMENTS + 2) * 2];
     verts[0] = 0.0f;
     verts[1] = 0.0f;
     for (int i = 0; i <= SEGMENTS; i++) {
-        float a = (float)i / (float)SEGMENTS * 2.0f * (float)M_PI;
+        float a = (float)i / (float)SEGMENTS * 2.0f * PI;
         verts[(i + 1) * 2 + 0] = cosf(a);
         verts[(i + 1) * 2 + 1] = sinf(a);
     }
@@ -42,12 +42,8 @@ static const char *vert_src =
     "uniform vec2 uCenter;\n"
     "uniform vec2 uRadius;\n"
     "uniform vec2 uResolution;\n"
-    "uniform float uAngle;\n"
     "void main() {\n"
-    "    vec2 scaled = aPos * uRadius;\n"
-    "    float c = cos(uAngle), s = sin(uAngle);\n"
-    "    vec2 rotated = vec2(scaled.x*c - scaled.y*s, scaled.x*s + scaled.y*c);\n"
-    "    vec2 px = uCenter + rotated;\n"
+    "    vec2 px = uCenter + aPos * uRadius;\n"
     "    vec2 ndc = (px / uResolution) * 2.0 - 1.0;\n"
     "    ndc.y = -ndc.y;\n"
     "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
@@ -62,7 +58,7 @@ static const char *frag_src =
     "}\n";
 
 static GLuint prog;
-static GLint u_center, u_radius, u_resolution, u_color, u_angle;
+static GLint u_center, u_radius, u_resolution, u_color;
 
 static GLuint compile(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
@@ -93,19 +89,26 @@ static void init_shader(void) {
     u_radius     = glGetUniformLocation(prog, "uRadius");
     u_resolution = glGetUniformLocation(prog, "uResolution");
     u_color      = glGetUniformLocation(prog, "uColor");
-    u_angle      = glGetUniformLocation(prog, "uAngle");
 }
 
-/* ── Draw an ellipse at (cx, cy) with radii (rx, ry) ──────────────── */
-
-static void draw_ellipse(float cx, float cy, float rx, float ry,
-                         float angle, float r, float g, float b) {
+static void draw_circle(float cx, float cy, float r, float cr, float cg, float cb) {
     glUniform2f(u_center, cx, cy);
-    glUniform2f(u_radius, rx, ry);
-    glUniform1f(u_angle, angle);
-    glUniform3f(u_color, r, g, b);
+    glUniform2f(u_radius, r, r);
+    glUniform3f(u_color, cr, cg, cb);
     glBindVertexArray(ellipse_vao);
     glDrawArrays(GL_TRIANGLE_FAN, 0, SEGMENTS + 2);
+}
+
+/* ── Helpers ───────────────────────────────────────────────────────── */
+
+static float lerpf(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+/* Shortest-path angle lerp (handles wrap-around) */
+static float lerp_angle(float a, float b, float t) {
+    float diff = fmodf(b - a + 3.0f * PI, 2.0f * PI) - PI;
+    return a + diff * t;
 }
 
 /* ── Callbacks ─────────────────────────────────────────────────────── */
@@ -114,19 +117,16 @@ static int fb_w, fb_h, win_w, win_h;
 static double mouse_x, mouse_y;
 
 static void framebuffer_size_cb(GLFWwindow *w, int width, int height) {
-    (void)w;
-    fb_w = width; fb_h = height;
+    (void)w; fb_w = width; fb_h = height;
     glViewport(0, 0, width, height);
 }
 
 static void window_size_cb(GLFWwindow *w, int width, int height) {
-    (void)w;
-    win_w = width; win_h = height;
+    (void)w; win_w = width; win_h = height;
 }
 
 static void cursor_pos_cb(GLFWwindow *w, double x, double y) {
-    (void)w;
-    mouse_x = x; mouse_y = y;
+    (void)w; mouse_x = x; mouse_y = y;
 }
 
 static void key_cb(GLFWwindow *w, int key, int sc, int action, int mods) {
@@ -179,15 +179,29 @@ int main(void) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    /* Hollow Knight style: simple white ovals, no iris/pupil.
-       Eyes are tall, narrow, slightly tilted inward, close together. */
-    const float eye_rx  = 22.0f;   /* narrow */
-    const float eye_ry  = 55.0f;   /* tall */
-    const float eye_gap = 70.0f;   /* close together */
-    const float eye_tilt = 0.15f;  /* inward tilt (radians) */
-    const float max_look = 8.0f;   /* subtle shift toward cursor */
+    /* Eye layout — matching the React reference */
+    const float eye_r      = 45.0f;   /* eye (white) radius */
+    const float pupil_r    = 14.0f;   /* pupil radius */
+    const float pupil_dist = 22.0f;   /* how far pupil orbits from center */
+    const float eye_gap    = 120.0f;  /* distance between eye centers */
+
+    /* Colors */
+    const float white_eye[] = {0.953f, 0.937f, 0.937f};  /* #f3efef */
+    const float red_eye[]   = {0.973f, 0.776f, 0.776f};  /* #f8c6c6 */
+    const float pupil_col[] = {0.10f,  0.10f,  0.10f};
+
+    /* Smoothed angles for each eye (the "tiredness" effect) */
+    float smooth_angle[2] = {0.0f, 0.0f};
+    float smooth_r[2]     = {white_eye[0], white_eye[0]};
+    float smooth_g[2]     = {white_eye[1], white_eye[1]};
+    float smooth_b[2]     = {white_eye[2], white_eye[2]};
+    double last_time = glfwGetTime();
 
     while (!glfwWindowShouldClose(window)) {
+        double now = glfwGetTime();
+        float dt = (float)(now - last_time);
+        last_time = now;
+
         glViewport(0, 0, fb_w, fb_h);
         glClearColor(0.11f, 0.11f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -196,34 +210,59 @@ int main(void) {
         glUniform2f(u_resolution, (float)fb_w, (float)fb_h);
 
         float scale = (float)fb_w / (float)win_w;
-        float cx = (float)fb_w * 0.5f;
-        float cy = (float)fb_h * 0.5f;
-
+        float center_x = (float)fb_w * 0.5f;
+        float center_y = (float)fb_h * 0.5f;
         float mx = (float)mouse_x * scale;
         float my = (float)mouse_y * scale;
 
+        /* Compute raw angle for each eye (degrees, 0=right, CCW) */
+        float angles_deg[2];
+        float eye_cx[2];
         for (int i = 0; i < 2; i++) {
             float side = (i == 0) ? -1.0f : 1.0f;
-            float ex = cx + side * eye_gap * 0.5f * scale;
-            float ey = cy;
+            eye_cx[i] = center_x + side * eye_gap * 0.5f * scale;
+            float dx = mx - eye_cx[i];
+            float dy = my - center_y;
+            float angle_rad = atan2f(-dy, dx);  /* screen Y is flipped */
+            float angle_deg = angle_rad * 180.0f / PI;
+            if (angle_deg < 0.0f) angle_deg += 360.0f;
+            angles_deg[i] = angle_deg;
+        }
 
-            /* Subtle shift toward cursor */
-            float dx = mx - ex;
-            float dy = my - ey;
-            float dist = sqrtf(dx * dx + dy * dy);
-            float ox = 0.0f, oy = 0.0f;
-            if (dist > 0.001f) {
-                float t = fminf(dist, max_look * scale) / dist;
-                ox = dx * t;
-                oy = dy * t;
-            }
+        /* Cross-eye detection (from React reference):
+           Left eye looking right (330-360 or 0-30) AND
+           right eye looking left (150-210) */
+        int cross_eyed =
+            (angles_deg[0] < 30.0f || angles_deg[0] > 330.0f) &&
+            (angles_deg[1] > 150.0f && angles_deg[1] < 210.0f);
 
-            /* Tilt inward: left eye tilts right, right eye tilts left */
-            float angle = side * eye_tilt;
+        /* Smoothing factor — higher = snappier */
+        float smoothing = 12.0f;
+        float color_smoothing = 6.0f;
+        float t  = 1.0f - expf(-smoothing * dt);
+        float tc = 1.0f - expf(-color_smoothing * dt);
 
-            draw_ellipse(ex + ox, ey + oy,
-                         eye_rx * scale, eye_ry * scale,
-                         angle, 1.0f, 1.0f, 1.0f);
+        for (int i = 0; i < 2; i++) {
+            float target_rad = angles_deg[i] * PI / 180.0f;
+
+            /* Smooth the angle */
+            smooth_angle[i] = lerp_angle(smooth_angle[i], target_rad, t);
+
+            /* Smooth the color */
+            const float *target_col = cross_eyed ? red_eye : white_eye;
+            smooth_r[i] = lerpf(smooth_r[i], target_col[0], tc);
+            smooth_g[i] = lerpf(smooth_g[i], target_col[1], tc);
+            smooth_b[i] = lerpf(smooth_b[i], target_col[2], tc);
+
+            /* Draw eye (white circle) */
+            draw_circle(eye_cx[i], center_y, eye_r * scale,
+                        smooth_r[i], smooth_g[i], smooth_b[i]);
+
+            /* Draw pupil orbiting inside the eye */
+            float px = eye_cx[i] + cosf(smooth_angle[i]) * pupil_dist * scale;
+            float py = center_y  - sinf(smooth_angle[i]) * pupil_dist * scale;
+            draw_circle(px, py, pupil_r * scale,
+                        pupil_col[0], pupil_col[1], pupil_col[2]);
         }
 
         glfwSwapBuffers(window);
