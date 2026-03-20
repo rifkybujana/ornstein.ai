@@ -27,7 +27,7 @@ find_package(CURL REQUIRED)
 # Main executable
 add_executable(ornstein src/main.c src/face.c src/mood.c src/platform_macos.m
                         src/text.c src/llm.c src/chat.c src/sentiment.c
-                        src/stats.c)
+                        src/stats.c src/ambient.c)
 target_include_directories(ornstein PRIVATE include src)
 target_link_libraries(ornstein PRIVATE glad glfw CURL::libcurl)
 
