@@ -31,4 +31,22 @@ const FaceParams *face_emotion_preset(Emotion e);
 /* Lerp current params toward target by exponential smoothing. */
 void face_params_lerp(FaceParams *current, const FaceParams *target, float speed, float dt);
 
+typedef struct {
+    FaceParams current;       /* the live interpolated params */
+    Emotion    target_emotion;
+    /* blink */
+    float blink_timer;        /* countdown to next blink */
+    float blink_phase;        /* 0 = not blinking, >0 = in blink */
+    /* yawn */
+    float yawn_timer;         /* countdown to next yawn (only in SLEEPY) */
+    float yawn_phase;         /* 0 = not yawning, >0 = in yawn */
+} FaceState;
+
+/* Initialize face state to NEUTRAL. */
+void face_init(FaceState *fs);
+
+/* Update face: lerp toward target emotion, run blink/yawn timers.
+   Returns the effective FaceParams to render (with blink/yawn overlaid). */
+FaceParams face_update(FaceState *fs, float dt);
+
 #endif
