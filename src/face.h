@@ -49,4 +49,17 @@ void face_init(FaceState *fs);
    Returns the effective FaceParams to render (with blink/yawn overlaid). */
 FaceParams face_update(FaceState *fs, float dt);
 
+/* Must be called once after OpenGL context is ready. */
+void face_render_init(void);
+
+/* Draw the face centered at (cx, cy) in framebuffer pixels.
+   mouse_x/mouse_y are cursor position in fb pixels.
+   scale is fb_w / win_w for HiDPI. */
+void face_render(const FaceParams *params, float cx, float cy,
+                 float mouse_x, float mouse_y, float scale,
+                 float fb_w, float fb_h);
+
+/* Cleanup GL resources. */
+void face_render_cleanup(void);
+
 #endif
