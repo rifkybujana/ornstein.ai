@@ -214,6 +214,18 @@ int chat_toggle(ChatState *cs) {
     cs->visible = !cs->visible;
     if (cs->visible) {
         cs->focused = 1;
+        /* Show help on first open if LLM not ready */
+        if (cs->msg_count == 0 && !llm_ready()) {
+            ChatMessage *msg = &cs->messages[cs->msg_count++];
+            snprintf(msg->text, CHAT_MAX_MSG_LEN,
+                "No model found.\n\n"
+                "Set ORNSTEIN_MODEL=/path/to/model.gguf\n"
+                "or place a GGUF file at\n"
+                "~/.ornstein/model.gguf\n\n"
+                "Recommended: TinyLlama-1.1B\n"
+                "or SmolLM-1.7B");
+            msg->is_user = 0;
+        }
     } else {
         cs->focused = 0;
     }
@@ -250,6 +262,19 @@ void chat_on_key(ChatState *cs, int key, int action, int mods) {
     if (key == GLFW_KEY_ENTER && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
         /* Submit message */
         if (cs->input_len > 0 && !cs->generating) {
+            /* Check if LLM is available */
+            if (!llm_ready()) {
+                if (cs->msg_count < CHAT_MAX_MESSAGES) {
+                    ChatMessage *msg = &cs->messages[cs->msg_count++];
+                    snprintf(msg->text, CHAT_MAX_MSG_LEN,
+                             "LLM not available. Check model path.");
+                    msg->is_user = 0;
+                }
+                cs->input[0] = '\0';
+                cs->input_len = 0;
+                return;
+            }
+
             /* Add user message */
             if (cs->msg_count < CHAT_MAX_MESSAGES) {
                 ChatMessage *msg = &cs->messages[cs->msg_count++];
